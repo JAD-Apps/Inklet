@@ -43,9 +43,6 @@ public sealed partial class MainWindow : Window
     private int _zoomPercent = 100;
     private double _baseFontSize = 14.0;
 
-    // Find state
-    private bool _showingReplace;
-
     private readonly string? _initialFilePath;
 
     // ---------------------------------------------------------------
@@ -109,31 +106,72 @@ public sealed partial class MainWindow : Window
 
     private async Task InitialLoadAsync()
     {
-        // Restore last session
-        var sessionPaths = _settings.SessionFilePaths;
+        var tabs = _settings.SessionTabs;
         var activeIdx = _settings.LastActiveTabIndex;
 
-        if (sessionPaths.Count > 0)
+        if (tabs.Count > 0)
         {
-            for (int i = 0; i < sessionPaths.Count; i++)
+            foreach (var data in tabs)
             {
-                var path = sessionPaths[i];
-                var tab = CreateTab();
-                if (!string.IsNullOrEmpty(path) && File.Exists(path))
-                    await LoadFileIntoSessionAsync(tab, path);
+                var session = new TabSession { FilePath = data.FilePath };
+
+                if (data.FilePath is not null && File.Exists(data.FilePath))
+                {
+                    // Reload file from disk…
+                    var (content, state) = await FileService.ReadFileAsync(data.FilePath);
+                    session.Document = state;
+
+                    if (data.IsModified)
+                    {
+                        // …but show the in-progress unsaved edits, not the on-disk version
+                        session.Content = data.Content;
+                        session.SavedContent = content;
+                    }
+                    else
+                    {
+                        session.Content = content;
+                        session.SavedContent = content;
+                    }
+                }
+                else
+                {
+                    // Untitled or missing file — restore content as-is
+                    session.Content = data.Content;
+                    session.SavedContent = data.IsModified ? string.Empty : data.Content;
+                    session.Document = BuildDocumentState(data);
+                }
+
+                session.CursorPosition = data.CursorPosition;
+                AttachTab(session);
             }
 
-            var clamp = Math.Clamp(activeIdx, 0, TabStrip.TabItems.Count - 1);
-            TabStrip.SelectedIndex = clamp;
+            TabStrip.SelectedIndex = Math.Clamp(activeIdx, 0, TabStrip.TabItems.Count - 1);
         }
         else
         {
             AddNewTab();
         }
 
-        // Command-line file overrides first tab
-        if (!string.IsNullOrWhiteSpace(_initialFilePath) && ActiveSession is not null)
-            await LoadFileIntoSessionAsync(ActiveSession, _initialFilePath);
+        // Command-line file always opens in its own tab
+        if (!string.IsNullOrWhiteSpace(_initialFilePath))
+        {
+            var session = AddNewTab();
+            await LoadFileIntoSessionAsync(session, _initialFilePath);
+        }
+    }
+
+    private static DocumentState BuildDocumentState(PersistedTabData data)
+    {
+        System.Text.Encoding enc;
+        try { enc = System.Text.Encoding.GetEncoding(data.EncodingCodePage); }
+        catch { enc = System.Text.Encoding.UTF8; }
+        return new DocumentState
+        {
+            FilePath = data.FilePath,
+            Encoding = enc,
+            HasBom = data.HasBom,
+            LineEnding = (LineEndingStyle)data.LineEnding,
+        };
     }
 
     #endregion
@@ -150,16 +188,19 @@ public sealed partial class MainWindow : Window
     private TabSession CreateTab(string? filePath = null)
     {
         var session = new TabSession { FilePath = filePath };
+        AttachTab(session);
+        return session;
+    }
 
+    private void AttachTab(TabSession session)
+    {
         var tvi = new TabViewItem
         {
             Header = session.TabTitle,
             Tag = session,
             IsClosable = true,
         };
-
         TabStrip.TabItems.Add(tvi);
-        return session;
     }
 
     private void RefreshTabHeader(TabSession session)
@@ -198,12 +239,23 @@ public sealed partial class MainWindow : Window
 
     private void PersistSession()
     {
-        var paths = TabStrip.TabItems
+        var tabData = TabStrip.TabItems
             .OfType<TabViewItem>()
-            .Select(tvi => tvi.Tag is TabSession s ? s.FilePath : null)
+            .Select(tvi => tvi.Tag is TabSession s ? new PersistedTabData
+            {
+                FilePath = s.FilePath,
+                Content = s.Content,
+                IsModified = s.IsModified,
+                CursorPosition = s.CursorPosition,
+                EncodingCodePage = s.Document.Encoding.CodePage,
+                HasBom = s.Document.HasBom,
+                LineEnding = (int)s.Document.LineEnding,
+            } : null)
+            .Where(d => d is not null)
+            .Select(d => d!)
             .ToList();
 
-        _settings.SessionFilePaths = paths;
+        _settings.SessionTabs = tabData;
         _settings.LastActiveTabIndex = TabStrip.SelectedIndex;
     }
 
@@ -212,11 +264,9 @@ public sealed partial class MainWindow : Window
     private void TabStrip_AddTabButtonClick(TabView sender, object args)
         => AddNewTab();
 
-    private async void TabStrip_TabCloseRequested(TabView sender, TabViewTabCloseRequestedEventArgs args)
+    private void TabStrip_TabCloseRequested(TabView sender, TabViewTabCloseRequestedEventArgs args)
     {
         if (args.Tab.Tag is not TabSession session) return;
-
-        if (session.IsModified && !await PromptSaveSessionAsync(session)) return;
 
         if (TabStrip.TabItems.Count == 1)
         {
@@ -280,10 +330,9 @@ public sealed partial class MainWindow : Window
 
     #region File Operations
 
-    private async void MenuNew_Click(object sender, RoutedEventArgs e)
+    private void MenuNew_Click(object sender, RoutedEventArgs e)
     {
         if (ActiveSession is not { } session) return;
-        if (session.IsModified && !await PromptSaveSessionAsync(session)) return;
 
         _suppressTextChanged = true;
         Editor.Text = string.Empty;
@@ -505,7 +554,6 @@ public sealed partial class MainWindow : Window
 
     private void ShowFindBar(bool showReplace)
     {
-        _showingReplace = showReplace;
         FindReplaceBar.Visibility = Visibility.Visible;
         ReplacePanel.Visibility = showReplace ? Visibility.Visible : Visibility.Collapsed;
         if (Editor.SelectedText.Length > 0 && !Editor.SelectedText.Contains('\n'))
@@ -893,35 +941,11 @@ public sealed partial class MainWindow : Window
 
     #region Window Close
 
-    private async void AppWindow_Closing(AppWindow sender, AppWindowClosingEventArgs args)
+    private void AppWindow_Closing(AppWindow sender, AppWindowClosingEventArgs args)
     {
-        // Save current editor text back to session before checking dirty state
         SaveCurrentTabState();
-
-        var dirtyTabs = TabStrip.TabItems
-            .OfType<TabViewItem>()
-            .Select(t => t.Tag as TabSession)
-            .Where(s => s is not null && s.IsModified)
-            .ToList();
-
-        if (dirtyTabs.Count > 0)
-        {
-            args.Cancel = true;
-
-            foreach (var session in dirtyTabs)
-            {
-                if (!await PromptSaveSessionAsync(session!)) return;
-            }
-
-            SaveWindowSize();
-            PersistSession();
-            Close();
-        }
-        else
-        {
-            SaveWindowSize();
-            PersistSession();
-        }
+        SaveWindowSize();
+        PersistSession();
     }
 
     private void SaveWindowSize()
@@ -937,32 +961,6 @@ public sealed partial class MainWindow : Window
     #endregion
 
     #region Dialogs
-
-    /// <summary>
-    /// Prompts user to save a specific tab session. Returns true if safe to proceed.
-    /// </summary>
-    private async Task<bool> PromptSaveSessionAsync(TabSession session)
-    {
-        var name = session.FilePath is null ? "Untitled" : Path.GetFileName(session.FilePath);
-        var dialog = new ContentDialog
-        {
-            Title = "Unsaved Changes",
-            Content = $"Do you want to save changes to {name}?",
-            PrimaryButtonText = "Save",
-            SecondaryButtonText = "Don't Save",
-            CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Primary,
-            XamlRoot = Content.XamlRoot
-        };
-
-        var result = await dialog.ShowAsync();
-        return result switch
-        {
-            ContentDialogResult.Primary => await SaveSessionAsync(session),
-            ContentDialogResult.Secondary => true,
-            _ => false
-        };
-    }
 
     private async Task ShowErrorAsync(string title, string message)
     {

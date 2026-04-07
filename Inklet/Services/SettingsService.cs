@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text.Json;
+using Inklet.Models;
 using Windows.Storage;
 
 namespace Inklet.Services;
@@ -96,18 +97,17 @@ internal sealed class SettingsService
     }
 
     /// <summary>
-    /// Persisted list of open file paths. Null entries represent untitled tabs.
+    /// Full per-tab state persisted at session close, including unsaved content.
     /// </summary>
-    internal IReadOnlyList<string?> SessionFilePaths
+    internal IReadOnlyList<PersistedTabData> SessionTabs
     {
         get
         {
-            var json = GetValue<string>(nameof(SessionFilePaths), null!);
+            var json = GetValue<string>(nameof(SessionTabs), null!);
             if (string.IsNullOrEmpty(json)) return [];
             try
             {
-                var raw = JsonSerializer.Deserialize<string?[]>(json);
-                return raw ?? [];
+                return JsonSerializer.Deserialize<PersistedTabData[]>(json) ?? [];
             }
             catch { return []; }
         }
@@ -115,7 +115,7 @@ internal sealed class SettingsService
         {
             try
             {
-                SetValue(nameof(SessionFilePaths), JsonSerializer.Serialize(value));
+                SetValue(nameof(SessionTabs), JsonSerializer.Serialize(value));
             }
             catch { }
         }
