@@ -1,35 +1,43 @@
-# Inklet
+﻿# Inklet
 
 A lightweight, modern Notepad clone for Windows built with WinUI 3 and .NET 8.
 
-Inklet faithfully recreates the classic Windows 10 Notepad experience with modern WinUI 3 styling, Mica backdrop, and system theme support — while staying as light and fast as possible.
+Inklet faithfully recreates the classic Windows 10 Notepad experience with modern WinUI 3 styling, Mica backdrop, and system theme support â€” while staying as light and fast as possible.
 
 ![Inklet](Inklet.png)
 
 ## Features
 
 ### File Operations
-- **New** — Start a fresh document
-- **Open** — Open any text file with automatic encoding detection
-- **Save / Save As** — Save with your choice of encoding
-- **Print / Page Setup** — Full Windows print support
-- **Drag & Drop** — Drop files directly onto the editor
+- **New** â€” Start a fresh document in the current tab
+- **New Tab** â€” Open an additional editor tab (Ctrl+T)
+- **Close Tab** â€” Close the current tab (Ctrl+W)
+- **Open** â€” Open any text file with automatic encoding detection
+- **Save / Save As** â€” Save with your choice of encoding (Ctrl+S / Ctrl+Shift+S)
+- **Print / Page Setup** â€” Full Windows print support (Ctrl+P)
+- **Drag & Drop** â€” Drop files directly onto the editor
 
 ### Edit Operations
-- **Undo** — Single-level undo
-- **Cut / Copy / Paste / Delete** — Standard clipboard operations
-- **Find & Replace** — With match-case option
-- **Go To Line** — Jump to a specific line number
-- **Select All** — Select entire document
-- **Time/Date** — Insert current timestamp
+- **Undo / Redo** â€” Ctrl+Z / Ctrl+Y
+- **Cut / Copy / Paste / Delete** â€” Standard clipboard operations
+- **Find & Replace** â€” With match-case option (Ctrl+F / Ctrl+H)
+- **Find Next / Previous** â€” F3 / Shift+F3
+- **Go To Line** â€” Jump to a specific line number (Ctrl+G)
+- **Select All** â€” Select entire document (Ctrl+A)
+- **Time/Date** â€” Insert current timestamp (F5)
+
+### Tabs & Session
+- **Multi-tab editing** â€” Any number of tabs open simultaneously
+- **Session persistence** â€” All tab content, cursor position, encoding, and line endings are automatically saved on close and restored on next launch (including unsaved content in untitled tabs)
+- **Tab headers** â€” `*` prefix indicates unsaved changes
 
 ### Format
-- **Word Wrap** — Toggle word wrap on/off
-- **Font** — Choose font family, style, and size
+- **Word Wrap** â€” Toggle word wrap on/off
+- **Font** â€” Choose font family, style, and size
 
 ### View
-- **Status Bar** — Line/column position, encoding, line ending, zoom level
-- **Zoom** — Ctrl+Scroll or Ctrl+Plus/Minus (25%–500%)
+- **Status Bar** â€” Line/column position, encoding, line ending, zoom level
+- **Zoom** â€” Ctrl+Scroll, Ctrl+Plus/Minus, or View â€º Zoom menu (25%â€“500%)
 
 ### Encoding Support
 - UTF-8 (with and without BOM)
@@ -49,6 +57,9 @@ Inklet faithfully recreates the classic Windows 10 Notepad experience with moder
 - Graceful handling of large files with async loading
 - Minimal memory footprint
 - Mica backdrop for modern appearance without overhead
+
+### File Associations
+- Registers as an "Open With" handler for common text formats: `.txt`, `.log`, `.ini`, `.cfg`, `.md`, `.xml`, `.json`, `.csv`, `.yaml`, `.yml`
 
 ## Requirements
 
@@ -73,6 +84,7 @@ This project is licensed for personal, non-commercial use only. See [LICENSE](LI
 
 ## Author
 
-John Donnelly — [JAD Apps](https://github.com/John-Donnelly)
+John Donnelly â€” [JAD Apps](https://github.com/John-Donnelly)
 
-© 2025 JAD Apps. All rights reserved.
+Â© 2025 JAD Apps. All rights reserved.
+

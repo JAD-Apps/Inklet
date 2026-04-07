@@ -1,115 +1,109 @@
-# Changelog
+﻿# Changelog
 
 All notable changes to Inklet are documented in this file.
 
 ---
 
-## [1.2.0] — 2026-04-07
+## [0.9.3] - 2026-07-04
+
+### Documentation
+- README - added Redo, Close Tab (Ctrl+W), Ctrl+Scroll zoom to feature list; added Tabs & Session section; added File Associations section; fixed Undo description; precise keyboard notation throughout
+- CHANGELOG - added entries for 0.9.1 and 0.9.2; corrected all version references
+
+---
+
+## [0.9.2] - 2026-07-04
 
 ### Added
-- **Full session persistence** — the entire editor state is saved automatically on close with no save dialog:
-  - Untitled tabs with unsaved content are preserved across restarts
-  - Saved files with in-progress edits restore both the on-disk version and the unsaved overlay
-  - Cursor position, encoding, BOM, and line ending style are all stored per tab
-- `PersistedTabData` record for structured JSON serialisation of tab snapshots
-- `SessionTabs` setting replaces the previous file-path-only `SessionFilePaths`
+- Redo - Edit > Redo (Ctrl+Y); the underlying TextBox redo stack is triggered so multi-step redo works
+- Close Tab - File > Close Tab (Ctrl+W) closes the active tab; mirrors standard browser/editor behaviour
+- Ctrl+Scroll zoom - Holding Ctrl while scrolling adjusts zoom in 10% steps
+
+### Fixed
+- Print temp file leak - temp file for the shell print verb is scheduled for deletion 30 s after spooling
+- Session loss on mid-session tab close - PersistSession() called immediately after non-last tab removed
 
 ### Changed
-- Closing the app no longer shows a "Save changes?" dialog — all state is committed silently
+- TabStrip_TabCloseRequested refactored into shared CloseTab(TabViewItem) used by both XAML event and Ctrl+W
+
+---
+
+## [0.9.1] - 2026-07-04
+
+### Added
+- File type associations - manifest declares windows.fileTypeAssociation for .txt .log .ini .cfg .md .xml .json .csv .yaml .yml
+- Assembly version - AssemblyVersion, FileVersion, and NuGet Version added to Inklet.csproj
+
+### Changed
+- Package manifest version bumped from 0.7.1.0 to 0.9.1.0
+
+---
+
+## [0.9.0] - 2026-04-07
+
+### Added
+- Full session persistence - entire editor state saved automatically on close with no save dialog
+  - Untitled tabs with unsaved content preserved across restarts
+  - Saved files with in-progress edits restore on-disk version and unsaved overlay
+  - Cursor position, encoding, BOM, and line ending stored per tab
+- PersistedTabData record for structured JSON serialisation of tab snapshots
+- SessionTabs setting replaces previous file-path-only SessionFilePaths
+- Launch window size set to 800x550; active tab index and cursor position restored on startup
+
+### Changed
+- Closing the app no longer shows a Save changes? dialog - all state committed silently
 - Closing a tab no longer prompts to save
-- File › New no longer prompts to save
-- `PromptSaveSessionAsync` removed
+- File > New no longer prompts to save
+- PromptSaveSessionAsync removed
 
 ---
 
-## [1.1.0] — 2026-04-07
+## [0.8.0] - 2026-04-07
 
 ### Added
-- **Multi-tab editing** via WinUI 3 `TabView`
-  - Ctrl+T and the `+` button open new tabs
-  - Tabs are closable, reorderable, and draggable
-  - Tab header shows `*` prefix when the tab has unsaved changes
-  - Closing the last tab resets it rather than exiting (mirrors Windows Notepad)
-- File › New Tab menu item (Ctrl+T)
-- **Basic session memory** — open file paths and active tab index restored on next launch
-- Font dialog: font-family `TextBox` replaced with an editable `ComboBox` pre-populated with common monospaced fonts (Cascadia Code, Consolas, Fira Code, JetBrains Mono, and others); free-text entry still accepted
-- Editor padding increased from `8,4` to `12,10` (horizontal, vertical) for improved readability
-- File › Open reuses the active tab when it is a clean untitled tab, otherwise opens in a new tab
-- Drag-and-drop follows the same reuse-or-new-tab logic
-- `TabSession` model to hold per-tab runtime state (file path, content, cursor, document metadata)
+- Multi-tab editing via WinUI 3 TabView (Ctrl+T, + button, closable/reorderable/draggable tabs)
+- Tab header shows * prefix when the tab has unsaved changes
+- Closing the last tab resets it rather than exiting (mirrors Windows Notepad)
+- File > New Tab menu item (Ctrl+T)
+- Basic session memory - open file paths and active tab index restored on next launch
+- Font dialog: font-family TextBox replaced with editable ComboBox with common monospaced fonts
+- Editor padding increased from 8,4 to 12,10 for improved readability
+- File > Open reuses active tab when clean untitled, otherwise opens in new tab
+- Drag-and-drop follows same reuse-or-new-tab logic
+- TabSession model for per-tab runtime state
 
 ---
 
-## [1.0.2] — 2026-04-07
+## [0.7.2] - 2026-04-07
 
 ### Fixed
-- Removed `WindowsPackageType=None` added in 1.0.1 — the app now runs correctly as a packaged MSIX via the `wapproj`; the unpackaged bootstrap shim conflicted with the package identity set by the deployment pipeline, causing an immediate `0x80070032` crash on launch
+- Removed WindowsPackageType=None added in 0.7.1; app now runs correctly as packaged MSIX via wapproj
 
 ---
 
-## [1.0.1] — 2026-04-07
+## [0.7.1] - 2026-04-07
 
 ### Fixed
-- Renamed package identity from auto-generated GUID to `JADApps.Inklet` v1.0.1.0
-- Fixed `MaxVersionTested` in `Package.appxmanifest` to match `TargetPlatformVersion` (`10.0.26100.0`)
-- Added `AppxOSMaxVersionTestedReplaceManifestVersion=false` to `wapproj` to prevent MSBuild overwriting the manifest value at build time
-- Added `WindowsPackageType=None` as a temporary workaround for `REGDB_E_CLASSNOTREG` on launch caused by a version mismatch between Windows 11 Insider build 26200 and `appxdeploymentserver.dll` v10.0.26100 (reverted in 1.0.2)
-- Replaced the umbrella `Microsoft.WindowsAppSDK` 1.8 metapackage with seven individual sub-packages to exclude the `Microsoft.WindowsAppSDK.AI` and `Microsoft.WindowsAppSDK.ML` packages, which were injecting AI DLLs and an `appxfragment` registering AI activatable classes that caused `DEP2500`
-- Removed `systemai:Capability` from `Package.appxmanifest` (root cause of initial `DEP2500`)
+- Renamed package identity from auto-generated GUID to JADApps.Inklet v0.7.1.0
+- Fixed MaxVersionTested in Package.appxmanifest to match TargetPlatformVersion (10.0.26100.0)
+- Added AppxOSMaxVersionTestedReplaceManifestVersion=false to wapproj
+- Added WindowsPackageType=None as temporary workaround for REGDB_E_CLASSNOTREG (reverted in 0.7.2)
+- Replaced umbrella Microsoft.WindowsAppSDK 1.8 metapackage with seven individual sub-packages to exclude AI/ML
+- Removed systemai:Capability from Package.appxmanifest (root cause of DEP2500)
 
 ---
 
-## [1.0.0] — 2026-04-07
+## [0.7.0] - 2026-04-07
 
 ### Added
-- Initial release of **Inklet** — a lightweight WinUI 3 Notepad clone for Windows
-
-#### Editor
-- Full-featured plain-text editor based on WinUI 3 `TextBox` with Mica backdrop
-- Word wrap toggle (Format › Word Wrap)
-- Font picker: family, size, bold, italic (Format › Font)
-- Zoom: In / Out / Reset (Ctrl++, Ctrl+−, Ctrl+0; View › Zoom)
-
-#### File operations
-- New, Open, Save, Save As with full file-picker integration
-- Large-file warning for files over the size threshold
-- Drag-and-drop file loading
-- Command-line file argument support (`Inklet.exe path\to\file.txt`)
-- Print via shell `print` verb
-
-#### Encoding & line endings
-- Automatic encoding detection (UTF-8, UTF-16 LE/BE, system ANSI, and others) via `UTF.Unknown` and `System.Text.Encoding.CodePages`
-- BOM detection and round-trip preservation
-- CRLF / LF / CR line ending detection, display, and round-trip preservation
-- Encoding and line ending shown in the status bar
-
-#### Edit operations
-- Undo (Ctrl+Z), Cut, Copy, Paste, Delete, Select All
-- Time/Date insert (F5)
-- Go To Line (Ctrl+G)
-- Find (Ctrl+F) with wrap-around and match-case option
-- Find Next (F3) / Find Previous (Shift+F3)
-- Replace (Ctrl+H) and Replace All — inline overlay panel
-
-#### UI chrome
-- Menu bar: File, Edit, Format, View, Help
-- Status bar: line/column position, zoom level, line ending, encoding (toggleable via View › Status Bar)
-- Window title reflects current file name and unsaved-changes indicator (`*`)
-- Save-on-close prompt for unsaved changes
+- Initial release of Inklet - a lightweight WinUI 3 Notepad clone for Windows
+- Full-featured plain-text editor with Mica backdrop, word wrap, font picker, zoom
+- New, Open, Save, Save As, Print, drag-and-drop, command-line file argument support
+- Automatic encoding detection (UTF-8, UTF-16 LE/BE, ANSI, international code pages)
+- BOM and line ending (CRLF/LF/CR) detection, display, and round-trip preservation
+- Undo, Cut, Copy, Paste, Delete, Select All, Time/Date, Go To Line, Find, Replace
+- Menu bar (File, Edit, Format, View, Help) and status bar
+- Window title reflects file name and unsaved-changes indicator (*)
 - Window size persisted and restored across sessions
 - About dialog with version, build date, runtime, and OS information
-
-#### Project structure
-- `Inklet` — main WinUI 3 application (`.csproj`, net8.0-windows10.0.19041.0)
-- `Inklet (Package)` — MSIX packaging project (`.wapproj`)
-- `Inklet.Tests` — MSTest 4 unit test project
-- `Inklet.slnx` — Visual Studio solution
-
-#### Testing
-- 58 unit tests across four suites: `EncodingDetectorTests`, `FileServiceTests`, `LineEndingTests`, `DocumentStateTests`
-- Tests cover encoding detection, BOM handling, file read/write round-trips, line ending detection and conversion, and document state display logic
-
-#### Infrastructure
-- `.gitignore`, `LICENSE` (MIT), `README.md`
-- Publish profiles for win-x64, win-x86, win-arm64
-- `AllowUnsafeBlocks` enabled for encoding detection interop
+- 58 unit tests: EncodingDetectorTests, FileServiceTests, LineEndingTests, DocumentStateTests
