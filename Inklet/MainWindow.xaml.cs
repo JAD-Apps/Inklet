@@ -10,6 +10,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
 using System;
 using System.Collections.Generic;
+using System.Drawing.Printing;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -1133,29 +1134,141 @@ public sealed partial class MainWindow : Window
     #region Print
 
     private async void MenuPageSetup_Click(object _, RoutedEventArgs _e)
-        => await ShowErrorAsync("Page Setup", "Page Setup is configured through the system Print dialog.");
+    {
+        var setup = LoadPrintPageSettings();
+
+        // ---- Build dialog content ----
+        var marginTop = new TextBox { Text = MarginToString(setup.Margins.Top), Header = "Top (inches)" };
+        var marginBottom = new TextBox { Text = MarginToString(setup.Margins.Bottom), Header = "Bottom (inches)" };
+        var marginLeft = new TextBox { Text = MarginToString(setup.Margins.Left), Header = "Left (inches)" };
+        var marginRight = new TextBox { Text = MarginToString(setup.Margins.Right), Header = "Right (inches)" };
+        var headerBox = new TextBox
+        {
+            Text = setup.Header,
+            Header = "Header",
+            PlaceholderText = "e.g. &f\t\t&d  —  tokens: &f filename, &d date, &t time, &p page, &P total"
+        };
+        var footerBox = new TextBox
+        {
+            Text = setup.Footer,
+            Header = "Footer",
+            PlaceholderText = "e.g. Page &p of &P"
+        };
+
+        var marginRow = new Microsoft.UI.Xaml.Controls.StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
+        marginRow.Children.Add(WrapWithWidth(marginLeft, 130));
+        marginRow.Children.Add(WrapWithWidth(marginRight, 130));
+        marginRow.Children.Add(WrapWithWidth(marginTop, 130));
+        marginRow.Children.Add(WrapWithWidth(marginBottom, 130));
+
+        var panel = new Microsoft.UI.Xaml.Controls.StackPanel { Spacing = 12, MinWidth = 560 };
+        panel.Children.Add(new TextBlock { Text = "Margins", Style = (Style)Application.Current.Resources["SubtitleTextBlockStyle"] });
+        panel.Children.Add(marginRow);
+        panel.Children.Add(new TextBlock { Text = "Header && Footer", Style = (Style)Application.Current.Resources["SubtitleTextBlockStyle"] });
+        panel.Children.Add(headerBox);
+        panel.Children.Add(footerBox);
+
+        var dialog = new ContentDialog
+        {
+            Title = "Page Setup",
+            Content = panel,
+            PrimaryButtonText = "OK",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = Content.XamlRoot
+        };
+
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+            return;
+
+        // ---- Parse and persist ----
+        int top = ParseMargin(marginTop.Text, setup.Margins.Top);
+        int bottom = ParseMargin(marginBottom.Text, setup.Margins.Bottom);
+        int left = ParseMargin(marginLeft.Text, setup.Margins.Left);
+        int right = ParseMargin(marginRight.Text, setup.Margins.Right);
+
+        _settings.PrintMarginTop = top / 100.0;
+        _settings.PrintMarginBottom = bottom / 100.0;
+        _settings.PrintMarginLeft = left / 100.0;
+        _settings.PrintMarginRight = right / 100.0;
+        _settings.PrintHeader = headerBox.Text;
+        _settings.PrintFooter = footerBox.Text;
+    }
 
     private async void MenuPrint_Click(object _, RoutedEventArgs _e)
     {
+        var session = ActiveSession;
+        if (session is null) return;
+
+        var text = Editor.Text;
+        var fileName = session.FilePath ?? "Untitled";
+        var setup = LoadPrintPageSettings();
+        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+
         try
         {
-            var tempFile = Path.Combine(Path.GetTempPath(), $"Inklet_Print_{Guid.NewGuid():N}.txt");
-            await File.WriteAllTextAsync(tempFile, Editor.Text);
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(tempFile)
+            // PrintDocument / PrintDialog are blocking Win32 calls — run on background thread.
+            bool printed = await Task.Run(() =>
             {
-                Verb = "print",
-                UseShellExecute = true
+                var svc = new PrintService(
+                    text,
+                    fileName,
+                    _settings.FontFamily,
+                    (float)_settings.FontSize,
+                    _settings.FontWeight == "Bold",
+                    _settings.FontStyle == "Italic",
+                    setup);
+
+                return svc.ShowDialogAndPrint(hwnd);
             });
 
-            // Best-effort cleanup: the spooler typically holds the file for a few seconds.
-            _ = Task.Delay(TimeSpan.FromSeconds(30)).ContinueWith(
-                _ => { try { File.Delete(tempFile); } catch { } },
-                TaskScheduler.Default);
+            // 'printed' is false when the user cancelled — nothing to report.
+            _ = printed;
         }
         catch (Exception ex)
         {
             await ShowErrorAsync("Print Error", ex.Message);
         }
+    }
+
+    // ---------------------------------------------------------------
+    // Print helpers
+    // ---------------------------------------------------------------
+
+    private PrintPageSettings LoadPrintPageSettings() => new()
+    {
+        Margins = new Margins(
+            (int)(_settings.PrintMarginLeft * 100),
+            (int)(_settings.PrintMarginRight * 100),
+            (int)(_settings.PrintMarginTop * 100),
+            (int)(_settings.PrintMarginBottom * 100)),
+        Header = _settings.PrintHeader,
+        Footer = _settings.PrintFooter
+    };
+
+    /// <summary>Converts a GDI+ hundredths-of-an-inch margin value to a display string.</summary>
+    private static string MarginToString(int hundredths) => (hundredths / 100.0).ToString("0.##");
+
+    /// <summary>
+    /// Parses a user-entered inch value and returns it as hundredths of an inch,
+    /// clamped to [25, 500]. Falls back to <paramref name="fallback"/> on invalid input.
+    /// </summary>
+    private static int ParseMargin(string text, int fallback)
+    {
+        if (double.TryParse(text, System.Globalization.NumberStyles.Any,
+                System.Globalization.CultureInfo.CurrentCulture, out double inches))
+        {
+            return Math.Clamp((int)(inches * 100), 25, 500);
+        }
+        return fallback;
+    }
+
+    /// <summary>Wraps a control in a container of fixed width for the margin row.</summary>
+    private static UIElement WrapWithWidth(UIElement control, double width)
+    {
+        var container = new Microsoft.UI.Xaml.Controls.StackPanel { Width = width };
+        container.Children.Add(control);
+        return container;
     }
 
     #endregion

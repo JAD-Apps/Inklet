@@ -96,6 +96,58 @@ internal sealed class SettingsService
         set => SetValue(nameof(LastActiveTabIndex), value);
     }
 
+    // ---------------------------------------------------------------
+    // Page setup
+    // ---------------------------------------------------------------
+
+    /// <summary>Top margin in inches.</summary>
+    internal double PrintMarginTop
+    {
+        get => GetValue(nameof(PrintMarginTop), 1.0);
+        set => SetValue(nameof(PrintMarginTop), value);
+    }
+
+    /// <summary>Bottom margin in inches.</summary>
+    internal double PrintMarginBottom
+    {
+        get => GetValue(nameof(PrintMarginBottom), 1.0);
+        set => SetValue(nameof(PrintMarginBottom), value);
+    }
+
+    /// <summary>Left margin in inches.</summary>
+    internal double PrintMarginLeft
+    {
+        get => GetValue(nameof(PrintMarginLeft), 1.25);
+        set => SetValue(nameof(PrintMarginLeft), value);
+    }
+
+    /// <summary>Right margin in inches.</summary>
+    internal double PrintMarginRight
+    {
+        get => GetValue(nameof(PrintMarginRight), 1.25);
+        set => SetValue(nameof(PrintMarginRight), value);
+    }
+
+    /// <summary>
+    /// Header template. Tokens: &amp;f = filename, &amp;d = short date, &amp;t = time, &amp;p = page, &amp;P = total pages.
+    /// Empty string disables the header.
+    /// </summary>
+    internal string PrintHeader
+    {
+        get => GetValue(nameof(PrintHeader), "&f");
+        set => SetValue(nameof(PrintHeader), value);
+    }
+
+    /// <summary>
+    /// Footer template. Tokens: same as <see cref="PrintHeader"/>.
+    /// Empty string disables the footer.
+    /// </summary>
+    internal string PrintFooter
+    {
+        get => GetValue(nameof(PrintFooter), "Page &p of &P");
+        set => SetValue(nameof(PrintFooter), value);
+    }
+
     /// <summary>
     /// Full per-tab state persisted at session close, including unsaved content.
     /// </summary>
