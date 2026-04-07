@@ -4,6 +4,40 @@ All notable changes to Inklet are documented in this file.
 
 ---
 
+## [0.9.5] - 2026-07-04
+
+### Added
+Save prompt on tab close: Save / Don't Save / Cancel dialog when closing a modified tab
+Tab width auto-expand: tabs fill available space immediately after a tab is closed
+Window resize recalculates tab widths so equal-width tabs always fill the tab strip
+
+### Changed
+CloseTab refactored to async CloseTabAsync with ContentDialog save prompt
+InvalidateTabLayout added: TabStrip.InvalidateMeasure + UpdateLayout deferred
+TitleBar_SizeChanged and TabStrip_TabItemsChanged call InvalidateTabLayout
+No save prompt on program close - session memory persists content silently (unchanged)
+Package manifest version 0.9.4.0 -> 0.9.5.0
+
+---
+
+## [0.9.4] - 2026-07-04
+
+### Added
+Custom title bar with app icon, label, gear menu button, scroll-left/right buttons
+TitleBarGrid 6 columns height 36px; gear button 36x36 Stretch
+TransparentButtonStyle in App.xaml for frameless icon buttons
+Single click scrolls ~500px; hold scrolls 80px/50ms after 400ms delay
+Scroll buttons shown/hidden as pair; enabled/disabled at endpoints
+DoubleTapped handlers on title bar controls prevent accidental window maximize
+Tab strip visual tree: built-in scroll buttons hidden, content rows collapsed
+Tab strip row set to Star; RepositionThemeTransition for smooth animations
+ScrollToEndOfTabStrip: deferred scroll so new tabs are visible
+Full multi-scale app icon set (BadgeLogo, LargeTile, SmallTile, SplashScreen, etc.)
+wapproj updated to reference all new image assets
+Package manifest version 0.9.2.0 -> 0.9.4.0
+
+---
+
 ## [0.9.3] - 2026-07-04
 
 ### Documentation
@@ -107,3 +141,4 @@ All notable changes to Inklet are documented in this file.
 - Window size persisted and restored across sessions
 - About dialog with version, build date, runtime, and OS information
 - 58 unit tests: EncodingDetectorTests, FileServiceTests, LineEndingTests, DocumentStateTests
+

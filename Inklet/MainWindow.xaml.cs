@@ -119,7 +119,7 @@ public sealed partial class MainWindow : Window
     private void TitleBar_SizeChanged(object _, SizeChangedEventArgs _e)
     {
         UpdateCaptionButtonColumn();
-        UpdateTabScrollButtons();
+        InvalidateTabLayout();
     }
 
     /// <summary>
@@ -350,12 +350,32 @@ public sealed partial class MainWindow : Window
     private void TabStrip_AddTabButtonClick(TabView _, object _args)
         => AddNewTab();
 
-    private void TabStrip_TabCloseRequested(TabView _, TabViewTabCloseRequestedEventArgs args)
-        => CloseTab(args.Tab);
+    private async void TabStrip_TabCloseRequested(TabView _, TabViewTabCloseRequestedEventArgs args)
+        => await CloseTabAsync(args.Tab);
 
-    private void CloseTab(TabViewItem tab)
+    private async Task CloseTabAsync(TabViewItem tab)
     {
         if (tab.Tag is not TabSession session) return;
+
+        // Sync the editor text into the session before checking IsModified,
+        // so the dirty flag is accurate for the tab being closed.
+        if (TabStrip.SelectedItem == tab)
+            SaveCurrentTabState();
+
+        if (session.IsModified)
+        {
+            var result = await ShowSavePromptAsync(session);
+            if (result == ContentDialogResult.Primary)
+            {
+                if (!await SaveSessionAsync(session))
+                    return; // Save failed or was cancelled — abort close
+            }
+            else if (result == ContentDialogResult.None)
+            {
+                return; // User chose Cancel — abort close
+            }
+            // ContentDialogResult.Secondary = Don't Save — fall through to close
+        }
 
         if (TabStrip.TabItems.Count == 1)
         {
@@ -375,6 +395,7 @@ public sealed partial class MainWindow : Window
         else
         {
             TabStrip.TabItems.Remove(tab);
+            InvalidateTabLayout();
             // Persist remaining tabs immediately so a mid-session close is not lost
             // if the app terminates unexpectedly before the next graceful shutdown.
             PersistSession();
@@ -401,9 +422,23 @@ public sealed partial class MainWindow : Window
 
     private void TabStrip_TabItemsChanged(TabView _, IVectorChangedEventArgs _args)
     {
+        InvalidateTabLayout();
+    }
+
+    /// <summary>
+    /// Forces the TabView to recalculate tab widths and updates scroll buttons.
+    /// Called after tab removal and window resize so equal-width tabs expand
+    /// to fill the available space.
+    /// </summary>
+    private void InvalidateTabLayout()
+    {
         UpdateTabScrollButtons();
-        // Also update after layout settles — tab widths change when items are added/removed.
-        DispatcherQueue.TryEnqueue(() => UpdateTabScrollButtons());
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            TabStrip.InvalidateMeasure();
+            TabStrip.UpdateLayout();
+            UpdateTabScrollButtons();
+        });
     }
 
     /// <summary>
@@ -615,10 +650,10 @@ public sealed partial class MainWindow : Window
     private void MenuNewTab_Click(object _, RoutedEventArgs _e)
         => AddNewTab();
 
-    private void MenuCloseTab_Click(object _, RoutedEventArgs _e)
+    private async void MenuCloseTab_Click(object _, RoutedEventArgs _e)
     {
         if (TabStrip.SelectedItem is TabViewItem tvi)
-            CloseTab(tvi);
+            await CloseTabAsync(tvi);
     }
 
     #endregion
@@ -1309,6 +1344,24 @@ public sealed partial class MainWindow : Window
             Title = title,
             Content = message,
             CloseButtonText = "OK",
+            XamlRoot = Content.XamlRoot
+        }.ShowAsync();
+    }
+
+    /// <summary>
+    /// Prompts the user to save unsaved changes.
+    /// Returns Primary (Save), Secondary (Don't Save), or None (Cancel).
+    /// </summary>
+    private async Task<ContentDialogResult> ShowSavePromptAsync(TabSession session)
+    {
+        return await new ContentDialog
+        {
+            Title = "Inklet",
+            Content = $"Do you want to save changes to {session.TabTitle.TrimStart('*')}?",
+            PrimaryButtonText = "Save",
+            SecondaryButtonText = "Don\u2019t Save",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
             XamlRoot = Content.XamlRoot
         }.ShowAsync();
     }
