@@ -94,14 +94,6 @@ public sealed partial class MainWindow : Window
         _zoomPercent = _settings.ZoomPercent;
         ApplyFontToEditor();
         ApplyZoom();
-
-        try
-        {
-            AppWindow.Resize(new SizeInt32(
-                (int)_settings.WindowWidth,
-                (int)_settings.WindowHeight));
-        }
-        catch { }
     }
 
     private async Task InitialLoadAsync()
@@ -111,6 +103,9 @@ public sealed partial class MainWindow : Window
 
         if (tabs.Count > 0)
         {
+            // Restore persisted window size
+            ResizeWindow((int)_settings.WindowWidth, (int)_settings.WindowHeight);
+
             foreach (var data in tabs)
             {
                 var session = new TabSession { FilePath = data.FilePath };
@@ -145,10 +140,25 @@ public sealed partial class MainWindow : Window
                 AttachTab(session);
             }
 
-            TabStrip.SelectedIndex = Math.Clamp(activeIdx, 0, TabStrip.TabItems.Count - 1);
+            // Select the previously active tab; SelectionChanged fires SwitchToTab
+            // which loads content and restores the cursor position.
+            var clampedIdx = Math.Clamp(activeIdx, 0, TabStrip.TabItems.Count - 1);
+            if (TabStrip.SelectedIndex == clampedIdx)
+            {
+                // Already on the right index (e.g. single tab) — force the switch manually
+                // because SelectionChanged won't fire if the index didn't change.
+                if (TabStrip.TabItems[clampedIdx] is TabViewItem tvi)
+                    SwitchToTab(tvi);
+            }
+            else
+            {
+                TabStrip.SelectedIndex = clampedIdx;
+            }
         }
         else
         {
+            // No previous session — open at the default 800x550
+            ResizeWindow(800, 550);
             AddNewTab();
         }
 
@@ -158,6 +168,12 @@ public sealed partial class MainWindow : Window
             var session = AddNewTab();
             await LoadFileIntoSessionAsync(session, _initialFilePath);
         }
+    }
+
+    private void ResizeWindow(int width, int height)
+    {
+        try { AppWindow.Resize(new SizeInt32(width, height)); }
+        catch { }
     }
 
     private static DocumentState BuildDocumentState(PersistedTabData data)

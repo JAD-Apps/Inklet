@@ -85,7 +85,7 @@ internal sealed class SettingsService
     /// <summary>Last used window height.</summary>
     internal double WindowHeight
     {
-        get => GetValue(nameof(WindowHeight), 600.0);
+        get => GetValue(nameof(WindowHeight), 550.0);
         set => SetValue(nameof(WindowHeight), value);
     }
 
