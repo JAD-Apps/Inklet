@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Animation;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -19,6 +20,7 @@ using Windows.ApplicationModel.DataTransfer;
 using Windows.Graphics;
 using Windows.Storage;
 using Windows.Storage.Pickers;
+using Windows.Foundation.Collections;
 
 namespace Inklet;
 
@@ -45,6 +47,9 @@ public sealed partial class MainWindow : Window
 
     private readonly string? _initialFilePath;
 
+    private DispatcherTimer? _tabScrollTimer;
+    private int _tabScrollDirection;
+
     // ---------------------------------------------------------------
     // Tab management
     // ---------------------------------------------------------------
@@ -64,6 +69,7 @@ public sealed partial class MainWindow : Window
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
         SetWindowIcon();
+        SetupCustomTitleBar();
         RestoreSettings();
         AppWindow.Closing += AppWindow_Closing;
 
@@ -81,6 +87,50 @@ public sealed partial class MainWindow : Window
                 AppWindow.SetIcon(iconPath);
         }
         catch { }
+    }
+
+    private void SetupCustomTitleBar()
+    {
+        ExtendsContentIntoTitleBar = true;
+        SetTitleBar(TitleBarGrid);
+
+        // Make the OS caption buttons blend into the Mica backdrop.
+        AppWindow.TitleBar.ButtonBackgroundColor = Colors.Transparent;
+        AppWindow.TitleBar.ButtonInactiveBackgroundColor = Colors.Transparent;
+        AppWindow.TitleBar.ButtonHoverBackgroundColor = Colors.Transparent;
+        AppWindow.TitleBar.ButtonPressedBackgroundColor = Colors.Transparent;
+    }
+
+    private void TitleBar_Loaded(object _, RoutedEventArgs _e)
+    {
+        UpdateCaptionButtonColumn();
+        UpdateTabScrollButtons();
+
+        // Wire the tab strip's internal ScrollViewer so the arrows update
+        // when the user scrolls the tab strip directly (not just via our buttons).
+        var sv = FindTabScrollViewer();
+        if (sv is not null)
+            sv.ViewChanged += (_, _) => UpdateTabScrollButtons();
+
+        ConfigureTabViewVisualTree();
+        WireScrollButtonPointerEvents();
+    }
+
+    private void TitleBar_SizeChanged(object _, SizeChangedEventArgs _e)
+    {
+        UpdateCaptionButtonColumn();
+        UpdateTabScrollButtons();
+    }
+
+    /// <summary>
+    /// Keeps the caption-button placeholder column the same width as the OS-drawn buttons
+    /// so that our interactive controls never overlap them.
+    /// </summary>
+    private void UpdateCaptionButtonColumn()
+    {
+        var rightInset = AppWindow.TitleBar.RightInset;
+        if (rightInset > 0)
+            CaptionButtonColumn.Width = new GridLength(rightInset);
     }
 
     private void RestoreSettings()
@@ -198,7 +248,26 @@ public sealed partial class MainWindow : Window
     {
         var session = CreateTab(filePath);
         TabStrip.SelectedItem = TabStrip.TabItems[^1];
+        ScrollToEndOfTabStrip();
         return session;
+    }
+
+    /// <summary>
+    /// Scrolls the tab strip all the way to the right so the newest tab is fully visible.
+    /// Deferred to run after layout has been updated with the new tab's width.
+    /// </summary>
+    private void ScrollToEndOfTabStrip()
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            TabStrip.UpdateLayout();
+            var sv = FindTabScrollViewer();
+            if (sv is not null && sv.ScrollableWidth > 0)
+            {
+                sv.ChangeView(sv.ScrollableWidth, null, null, false);
+                UpdateTabScrollButtons();
+            }
+        });
     }
 
     private TabSession CreateTab(string? filePath = null)
@@ -278,10 +347,10 @@ public sealed partial class MainWindow : Window
 
     // XAML event handlers
 
-    private void TabStrip_AddTabButtonClick(TabView sender, object args)
+    private void TabStrip_AddTabButtonClick(TabView _, object _args)
         => AddNewTab();
 
-    private void TabStrip_TabCloseRequested(TabView sender, TabViewTabCloseRequestedEventArgs args)
+    private void TabStrip_TabCloseRequested(TabView _, TabViewTabCloseRequestedEventArgs args)
         => CloseTab(args.Tab);
 
     private void CloseTab(TabViewItem tab)
@@ -312,7 +381,7 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void TabStrip_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void TabStrip_SelectionChanged(object _, SelectionChangedEventArgs e)
     {
         // Persist state leaving the old tab
         foreach (var removed in e.RemovedItems.OfType<TabViewItem>())
@@ -326,17 +395,227 @@ public sealed partial class MainWindow : Window
 
         if (TabStrip.SelectedItem is TabViewItem tvi)
             SwitchToTab(tvi);
+
+        UpdateTabScrollButtons();
     }
 
-    private void TabStrip_TabItemsChanged(TabView sender, Windows.Foundation.Collections.IVectorChangedEventArgs args)
+    private void TabStrip_TabItemsChanged(TabView _, IVectorChangedEventArgs _args)
     {
-        // Nothing extra needed; headers are updated via RefreshTabHeader
+        UpdateTabScrollButtons();
+        // Also update after layout settles — tab widths change when items are added/removed.
+        DispatcherQueue.TryEnqueue(() => UpdateTabScrollButtons());
     }
 
-    private void MenuNewTab_Click(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// Shows/hides the scroll arrows based on whether the tab strip is overflowing.
+    /// Both buttons are shown or hidden as a pair to prevent layout flickering.
+    /// Individual buttons are enabled/disabled based on the current scroll position.
+    /// </summary>
+    private void UpdateTabScrollButtons()
+    {
+        var sv = FindTabScrollViewer();
+        if (sv is null)
+        {
+            ScrollTabsLeftButton.Visibility = Visibility.Collapsed;
+            ScrollTabsRightButton.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        bool overflows = sv.ScrollableWidth > 0;
+        var vis = overflows ? Visibility.Visible : Visibility.Collapsed;
+        ScrollTabsLeftButton.Visibility = vis;
+        ScrollTabsRightButton.Visibility = vis;
+
+        ScrollTabsLeftButton.IsEnabled = sv.HorizontalOffset > 0;
+        ScrollTabsRightButton.IsEnabled = sv.HorizontalOffset < sv.ScrollableWidth - 1;
+    }
+
+    private ScrollViewer? FindTabScrollViewer()
+    {
+        // Walk the TabView's visual tree to find its internal ScrollViewer.
+        return FindDescendant<ScrollViewer>(TabStrip);
+    }
+
+    private static T? FindDescendant<T>(DependencyObject parent) where T : DependencyObject
+    {
+        var count = VisualTreeHelper.GetChildrenCount(parent);
+        for (int i = 0; i < count; i++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, i);
+            if (child is T match) return match;
+            var result = FindDescendant<T>(child);
+            if (result is not null) return result;
+        }
+        return null;
+    }
+
+    private static FrameworkElement? FindDescendantByName(DependencyObject parent, string name)
+    {
+        var count = VisualTreeHelper.GetChildrenCount(parent);
+        for (int i = 0; i < count; i++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, i);
+            if (child is FrameworkElement fe && fe.Name == name) return fe;
+            var result = FindDescendantByName(child, name);
+            if (result is not null) return result;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Hides the TabView's built-in scroll buttons, collapses the unused content area,
+    /// and adds smooth reposition transitions for tab items.
+    /// </summary>
+    private void ConfigureTabViewVisualTree()
+    {
+        // Hide the TabView's built-in scroll buttons (we provide our own).
+        var scrollDecrease = FindDescendantByName(TabStrip, "ScrollDecreaseButton");
+        var scrollIncrease = FindDescendantByName(TabStrip, "ScrollIncreaseButton");
+        if (scrollDecrease is not null) scrollDecrease.Visibility = Visibility.Collapsed;
+        if (scrollIncrease is not null) scrollIncrease.Visibility = Visibility.Collapsed;
+
+        // Collapse the content area rows and stretch the tab strip row so it fills
+        // the entire TabView height, eliminating any gap below the tabs.
+        if (VisualTreeHelper.GetChildrenCount(TabStrip) > 0 &&
+            VisualTreeHelper.GetChild(TabStrip, 0) is Grid rootGrid)
+        {
+            if (rootGrid.RowDefinitions.Count > 0)
+                rootGrid.RowDefinitions[0].Height = new GridLength(1, GridUnitType.Star);
+            for (int i = 1; i < rootGrid.RowDefinitions.Count; i++)
+                rootGrid.RowDefinitions[i].Height = new GridLength(0);
+        }
+
+        // Hide the bottom separator line.
+        var separator = FindDescendantByName(TabStrip, "TabSeparator");
+        if (separator is not null) separator.Visibility = Visibility.Collapsed;
+
+        // Add smooth reposition animation so tabs slide when added/removed.
+        var itemsPanel = FindDescendant<ItemsStackPanel>(TabStrip);
+        if (itemsPanel is not null)
+        {
+            itemsPanel.ChildrenTransitions ??= new TransitionCollection();
+            itemsPanel.ChildrenTransitions.Add(new RepositionThemeTransition());
+        }
+    }
+
+    /// <summary>
+    /// Wires PointerPressed/Released events on the scroll buttons so that a single
+    /// click scrolls ~5 tabs and holding the button scrolls continuously.
+    /// </summary>
+    private void WireScrollButtonPointerEvents()
+    {
+        ScrollTabsLeftButton.AddHandler(
+            UIElement.PointerPressedEvent,
+            new PointerEventHandler(ScrollTabsLeft_PointerPressed), true);
+        ScrollTabsLeftButton.AddHandler(
+            UIElement.PointerReleasedEvent,
+            new PointerEventHandler(ScrollTabs_PointerReleased), true);
+        ScrollTabsLeftButton.AddHandler(
+            UIElement.PointerCanceledEvent,
+            new PointerEventHandler(ScrollTabs_PointerReleased), true);
+        ScrollTabsLeftButton.AddHandler(
+            UIElement.PointerCaptureLostEvent,
+            new PointerEventHandler(ScrollTabs_PointerReleased), true);
+
+        ScrollTabsRightButton.AddHandler(
+            UIElement.PointerPressedEvent,
+            new PointerEventHandler(ScrollTabsRight_PointerPressed), true);
+        ScrollTabsRightButton.AddHandler(
+            UIElement.PointerReleasedEvent,
+            new PointerEventHandler(ScrollTabs_PointerReleased), true);
+        ScrollTabsRightButton.AddHandler(
+            UIElement.PointerCanceledEvent,
+            new PointerEventHandler(ScrollTabs_PointerReleased), true);
+        ScrollTabsRightButton.AddHandler(
+            UIElement.PointerCaptureLostEvent,
+            new PointerEventHandler(ScrollTabs_PointerReleased), true);
+    }
+
+    private void ScrollTabsLeft_PointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        if (!ScrollTabsLeftButton.IsEnabled) return;
+        ScrollTabStrip(-500);
+        StartTabScrollRepeat(-1);
+    }
+
+    private void ScrollTabsRight_PointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        if (!ScrollTabsRightButton.IsEnabled) return;
+        ScrollTabStrip(500);
+        StartTabScrollRepeat(1);
+    }
+
+    private void ScrollTabs_PointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        StopTabScrollRepeat();
+    }
+
+    private void StartTabScrollRepeat(int direction)
+    {
+        StopTabScrollRepeat();
+        _tabScrollDirection = direction;
+
+        // Initial delay before continuous scrolling begins.
+        _tabScrollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
+        _tabScrollTimer.Tick += TabScrollTimer_InitialTick;
+        _tabScrollTimer.Start();
+    }
+
+    private void TabScrollTimer_InitialTick(object? sender, object e)
+    {
+        if (_tabScrollTimer is null) return;
+        _tabScrollTimer.Stop();
+        _tabScrollTimer.Tick -= TabScrollTimer_InitialTick;
+
+        // Switch to fast repeat interval for smooth continuous scrolling.
+        _tabScrollTimer.Interval = TimeSpan.FromMilliseconds(50);
+        _tabScrollTimer.Tick += TabScrollTimer_RepeatTick;
+        _tabScrollTimer.Start();
+    }
+
+    private void TabScrollTimer_RepeatTick(object? sender, object e)
+    {
+        ScrollTabStrip(_tabScrollDirection * 80);
+
+        // Stop repeating once we've reached the scroll boundary.
+        var sv = FindTabScrollViewer();
+        if (sv is null) { StopTabScrollRepeat(); return; }
+        bool atEnd = _tabScrollDirection < 0
+            ? sv.HorizontalOffset <= 0
+            : sv.HorizontalOffset >= sv.ScrollableWidth - 1;
+        if (atEnd) StopTabScrollRepeat();
+    }
+
+    private void StopTabScrollRepeat()
+    {
+        if (_tabScrollTimer is not null)
+        {
+            _tabScrollTimer.Stop();
+            _tabScrollTimer = null;
+        }
+    }
+
+    private void ScrollTabStrip(double offsetDelta)
+    {
+        var sv = FindTabScrollViewer();
+        if (sv is null) return;
+        var newOffset = Math.Clamp(sv.HorizontalOffset + offsetDelta, 0, sv.ScrollableWidth);
+        sv.ChangeView(newOffset, null, null, false);
+        UpdateTabScrollButtons();
+    }
+
+    /// <summary>
+    /// Prevents double-clicking on title bar buttons from maximizing/restoring the window.
+    /// </summary>
+    private void TitleBarButton_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    {
+        e.Handled = true;
+    }
+
+    private void MenuNewTab_Click(object _, RoutedEventArgs _e)
         => AddNewTab();
 
-    private void MenuCloseTab_Click(object sender, RoutedEventArgs e)
+    private void MenuCloseTab_Click(object _, RoutedEventArgs _e)
     {
         if (TabStrip.SelectedItem is TabViewItem tvi)
             CloseTab(tvi);
@@ -351,8 +630,8 @@ public sealed partial class MainWindow : Window
         session ??= ActiveSession;
         if (session is null) return;
 
+        // Update taskbar and snap/alt-tab display; the visual title bar shows the tab strip.
         var title = $"{session.TabTitle} - Inklet";
-        Title = title;
         AppWindow.Title = title;
     }
 
@@ -360,7 +639,7 @@ public sealed partial class MainWindow : Window
 
     #region File Operations
 
-    private void MenuNew_Click(object sender, RoutedEventArgs e)
+    private void MenuNew_Click(object _, RoutedEventArgs _e)
     {
         if (ActiveSession is not { } session) return;
 
@@ -379,7 +658,7 @@ public sealed partial class MainWindow : Window
         UpdateStatusBar(session);
     }
 
-    private async void MenuOpen_Click(object sender, RoutedEventArgs e)
+    private async void MenuOpen_Click(object _, RoutedEventArgs _e)
     {
         var picker = new FileOpenPicker();
         InitializeWithWindow(picker);
@@ -406,17 +685,17 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async void MenuSave_Click(object sender, RoutedEventArgs e)
+    private async void MenuSave_Click(object _, RoutedEventArgs _e)
     {
         if (ActiveSession is not null) await SaveSessionAsync(ActiveSession);
     }
 
-    private async void MenuSaveAs_Click(object sender, RoutedEventArgs e)
+    private async void MenuSaveAs_Click(object _, RoutedEventArgs _e)
     {
         if (ActiveSession is not null) await SaveAsSessionAsync(ActiveSession);
     }
 
-    private void MenuExit_Click(object sender, RoutedEventArgs e) => Close();
+    private void MenuExit_Click(object _, RoutedEventArgs _e) => Close();
 
     private async Task LoadFileIntoSessionAsync(TabSession session, string filePath)
     {
@@ -524,9 +803,9 @@ public sealed partial class MainWindow : Window
 
     #region Edit Operations
 
-    private void MenuUndo_Click(object sender, RoutedEventArgs e) => Editor.Undo();
+    private void MenuUndo_Click(object _, RoutedEventArgs _e) => Editor.Undo();
 
-    private void MenuRedo_Click(object sender, RoutedEventArgs e)
+    private void MenuRedo_Click(object _, RoutedEventArgs _e)
     {
         // TextBox exposes Undo() but not Redo(); simulate Ctrl+Y so the
         // control's internal redo stack is consumed.
@@ -540,12 +819,12 @@ public sealed partial class MainWindow : Window
         keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0);
     }
 
-    private void MenuCut_Click(object sender, RoutedEventArgs e) => Editor.CutSelectionToClipboard();
-    private void MenuCopy_Click(object sender, RoutedEventArgs e) => Editor.CopySelectionToClipboard();
-    private void MenuPaste_Click(object sender, RoutedEventArgs e) => Editor.PasteFromClipboard();
-    private void MenuSelectAll_Click(object sender, RoutedEventArgs e) => Editor.SelectAll();
+    private void MenuCut_Click(object _, RoutedEventArgs _e) => Editor.CutSelectionToClipboard();
+    private void MenuCopy_Click(object _, RoutedEventArgs _e) => Editor.CopySelectionToClipboard();
+    private void MenuPaste_Click(object _, RoutedEventArgs _e) => Editor.PasteFromClipboard();
+    private void MenuSelectAll_Click(object _, RoutedEventArgs _e) => Editor.SelectAll();
 
-    private void MenuDelete_Click(object sender, RoutedEventArgs e)
+    private void MenuDelete_Click(object _, RoutedEventArgs _e)
     {
         if (Editor.SelectionLength > 0)
         {
@@ -556,7 +835,7 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void MenuTimeDate_Click(object sender, RoutedEventArgs e)
+    private void MenuTimeDate_Click(object _, RoutedEventArgs _e)
     {
         var timeDate = DateTime.Now.ToString("h:mm tt M/d/yyyy");
         var start = Editor.SelectionStart;
@@ -572,12 +851,12 @@ public sealed partial class MainWindow : Window
 
     #region Find & Replace
 
-    private void MenuFind_Click(object sender, RoutedEventArgs e) => ShowFindBar(false);
-    private void MenuReplace_Click(object sender, RoutedEventArgs e) => ShowFindBar(true);
-    private void MenuFindNext_Click(object sender, RoutedEventArgs e) => FindNext();
-    private void MenuFindPrevious_Click(object sender, RoutedEventArgs e) => FindPrevious();
+    private void MenuFind_Click(object _, RoutedEventArgs _e) => ShowFindBar(false);
+    private void MenuReplace_Click(object _, RoutedEventArgs _e) => ShowFindBar(true);
+    private void MenuFindNext_Click(object _, RoutedEventArgs _e) => FindNext();
+    private void MenuFindPrevious_Click(object _, RoutedEventArgs _e) => FindPrevious();
 
-    private async void MenuGoTo_Click(object sender, RoutedEventArgs e)
+    private async void MenuGoTo_Click(object _, RoutedEventArgs _e)
     {
         var lineCount = CountLines(Editor.Text);
         var input = new TextBox { PlaceholderText = $"Line number (1-{lineCount})" };
@@ -609,13 +888,13 @@ public sealed partial class MainWindow : Window
         FindTextBox.SelectAll();
     }
 
-    private void CloseFindBar_Click(object sender, RoutedEventArgs e)
+    private void CloseFindBar_Click(object _, RoutedEventArgs _e)
     {
         FindReplaceBar.Visibility = Visibility.Collapsed;
         Editor.Focus(FocusState.Programmatic);
     }
 
-    private void FindTextBox_KeyDown(object sender, KeyRoutedEventArgs e)
+    private void FindTextBox_KeyDown(object _, KeyRoutedEventArgs e)
     {
         if (e.Key == Windows.System.VirtualKey.Enter) { FindNext(); e.Handled = true; }
         else if (e.Key == Windows.System.VirtualKey.Escape)
@@ -626,8 +905,8 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void FindNext_Click(object sender, RoutedEventArgs e) => FindNext();
-    private void FindPrev_Click(object sender, RoutedEventArgs e) => FindPrevious();
+    private void FindNext_Click(object _, RoutedEventArgs _e) => FindNext();
+    private void FindPrev_Click(object _, RoutedEventArgs _e) => FindPrevious();
 
     private void FindNext()
     {
@@ -652,7 +931,7 @@ public sealed partial class MainWindow : Window
         if (idx >= 0) { Editor.SelectionStart = idx; Editor.SelectionLength = text.Length; Editor.Focus(FocusState.Programmatic); }
     }
 
-    private void Replace_Click(object sender, RoutedEventArgs e)
+    private void Replace_Click(object _, RoutedEventArgs _e)
     {
         if (string.IsNullOrEmpty(FindTextBox.Text)) return;
         var cmp = FindMatchCase.IsChecked == true ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
@@ -666,7 +945,7 @@ public sealed partial class MainWindow : Window
         FindNext();
     }
 
-    private void ReplaceAll_Click(object sender, RoutedEventArgs e)
+    private void ReplaceAll_Click(object _, RoutedEventArgs _e)
     {
         if (string.IsNullOrEmpty(FindTextBox.Text)) return;
         var cmp = FindMatchCase.IsChecked == true ? StringComparison.CurrentCulture : StringComparison.CurrentCultureIgnoreCase;
@@ -696,14 +975,14 @@ public sealed partial class MainWindow : Window
 
     #region Format
 
-    private void MenuWordWrap_Click(object sender, RoutedEventArgs e)
+    private void MenuWordWrap_Click(object _, RoutedEventArgs _e)
     {
         var wrap = MenuWordWrap.IsChecked;
         Editor.TextWrapping = wrap ? TextWrapping.Wrap : TextWrapping.NoWrap;
         _settings.WordWrap = wrap;
     }
 
-    private async void MenuFont_Click(object sender, RoutedEventArgs e) => await ShowFontDialogAsync();
+    private async void MenuFont_Click(object _, RoutedEventArgs _e) => await ShowFontDialogAsync();
 
     private async Task ShowFontDialogAsync()
     {
@@ -790,16 +1069,16 @@ public sealed partial class MainWindow : Window
 
     #region View
 
-    private void MenuStatusBar_Click(object sender, RoutedEventArgs e)
+    private void MenuStatusBar_Click(object _, RoutedEventArgs _e)
     {
         var visible = MenuStatusBar.IsChecked;
         StatusBarBorder.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
         _settings.StatusBarVisible = visible;
     }
 
-    private void MenuZoomIn_Click(object sender, RoutedEventArgs e) => SetZoom(_zoomPercent + 10);
-    private void MenuZoomOut_Click(object sender, RoutedEventArgs e) => SetZoom(_zoomPercent - 10);
-    private void MenuZoomReset_Click(object sender, RoutedEventArgs e) => SetZoom(100);
+    private void MenuZoomIn_Click(object _, RoutedEventArgs _e) => SetZoom(_zoomPercent + 10);
+    private void MenuZoomOut_Click(object _, RoutedEventArgs _e) => SetZoom(_zoomPercent - 10);
+    private void MenuZoomReset_Click(object _, RoutedEventArgs _e) => SetZoom(100);
 
     private void SetZoom(int percent)
     {
@@ -818,10 +1097,10 @@ public sealed partial class MainWindow : Window
 
     #region Print
 
-    private async void MenuPageSetup_Click(object sender, RoutedEventArgs e)
+    private async void MenuPageSetup_Click(object _, RoutedEventArgs _e)
         => await ShowErrorAsync("Page Setup", "Page Setup is configured through the system Print dialog.");
 
-    private async void MenuPrint_Click(object sender, RoutedEventArgs e)
+    private async void MenuPrint_Click(object _, RoutedEventArgs _e)
     {
         try
         {
@@ -848,7 +1127,7 @@ public sealed partial class MainWindow : Window
 
     #region About
 
-    private async void MenuAbout_Click(object sender, RoutedEventArgs e)
+    private async void MenuAbout_Click(object _, RoutedEventArgs _e)
     {
         var assembly = Assembly.GetExecutingAssembly();
         var version = assembly.GetName().Version ?? new Version(1, 0, 0);
@@ -918,7 +1197,7 @@ public sealed partial class MainWindow : Window
 
     #region Editor Events
 
-    private void Editor_TextChanged(object sender, TextChangedEventArgs e)
+    private void Editor_TextChanged(object _, TextChangedEventArgs _e)
     {
         if (_suppressTextChanged) return;
         if (ActiveSession is not { } session) return;
@@ -928,12 +1207,12 @@ public sealed partial class MainWindow : Window
         UpdateTitle(session);
     }
 
-    private void Editor_SelectionChanged(object sender, RoutedEventArgs e)
+    private void Editor_SelectionChanged(object _, RoutedEventArgs _e)
     {
         UpdateCursorPosition();
     }
 
-    private void Editor_PointerWheelChanged(object sender, PointerRoutedEventArgs e)
+    private void Editor_PointerWheelChanged(object _, PointerRoutedEventArgs e)
     {
         // Ctrl+Scroll adjusts zoom; let the TextBox handle plain scrolling normally.
         if (e.KeyModifiers.HasFlag(Windows.System.VirtualKeyModifiers.Control))
@@ -948,13 +1227,13 @@ public sealed partial class MainWindow : Window
 
     #region Drag and Drop
 
-    private void Editor_DragOver(object sender, DragEventArgs e)
+    private void Editor_DragOver(object _, DragEventArgs e)
     {
         if (e.DataView.Contains(StandardDataFormats.StorageItems))
             e.AcceptedOperation = DataPackageOperation.Copy;
     }
 
-    private async void Editor_Drop(object sender, DragEventArgs e)
+    private async void Editor_Drop(object _, DragEventArgs e)
     {
         if (!e.DataView.Contains(StandardDataFormats.StorageItems)) return;
         var items = await e.DataView.GetStorageItemsAsync();
@@ -1002,7 +1281,7 @@ public sealed partial class MainWindow : Window
 
     #region Window Close
 
-    private void AppWindow_Closing(AppWindow sender, AppWindowClosingEventArgs args)
+    private void AppWindow_Closing(AppWindow _, AppWindowClosingEventArgs _args)
     {
         SaveCurrentTabState();
         SaveWindowSize();
@@ -1056,8 +1335,10 @@ public sealed partial class MainWindow : Window
     }
 
     // Simulates a Win32 key event so that the TextBox processes redo internally.
+#pragma warning disable SYSLIB1054
     [DllImport("user32.dll")]
     private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, nint dwExtraInfo);
+#pragma warning restore SYSLIB1054
 
     #endregion
 }
