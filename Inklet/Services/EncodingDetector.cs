@@ -101,7 +101,6 @@ public static class EncodingDetector
     private static bool IsValidUtf8(byte[] data)
     {
         int i = 0;
-        bool hasMultiByte = false;
 
         while (i < data.Length)
         {
@@ -115,17 +114,14 @@ public static class EncodingDetector
             else if (b >= 0xC2 && b <= 0xDF)
             {
                 sequenceLength = 2;
-                hasMultiByte = true;
             }
             else if (b >= 0xE0 && b <= 0xEF)
             {
                 sequenceLength = 3;
-                hasMultiByte = true;
             }
             else if (b >= 0xF0 && b <= 0xF4)
             {
                 sequenceLength = 4;
-                hasMultiByte = true;
             }
             else
             {

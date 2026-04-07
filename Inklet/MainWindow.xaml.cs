@@ -28,6 +28,9 @@ namespace Inklet;
 /// </summary>
 public sealed partial class MainWindow : Window
 {
+    private static readonly string[] s_textFileTypes = [".txt"];
+    private static readonly string[] s_allFileTypes = ["."];
+
     private readonly SettingsService _settings = new();
     private DocumentState _documentState = new();
     private bool _isModified;
@@ -272,8 +275,8 @@ public sealed partial class MainWindow : Window
         var picker = new FileSavePicker();
         InitializeWithWindow(picker);
         picker.SuggestedStartLocation = PickerLocationId.DocumentsLibrary;
-        picker.FileTypeChoices.Add("Text Documents", new[] { ".txt" });
-        picker.FileTypeChoices.Add("All Files", new[] { "." });
+        picker.FileTypeChoices.Add("Text Documents", s_textFileTypes);
+        picker.FileTypeChoices.Add("All Files", s_allFileTypes);
         picker.SuggestedFileName = _documentState.DisplayFileName;
 
         var file = await picker.PickSaveFileAsync();
@@ -997,11 +1000,8 @@ public sealed partial class MainWindow : Window
     private void InitializeWithWindow(object picker)
     {
         var hwnd = WindowNative.GetWindowHandle(this);
-        InitializeWithWindow(picker, hwnd);
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
     }
-
-    [DllImport("Microsoft.ui.xaml.dll")]
-    private static extern void InitializeWithWindow(object obj, IntPtr hwnd);
 
     private static int CountLines(string text)
     {
