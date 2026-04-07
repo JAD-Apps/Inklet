@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Text.Json;
 using Windows.Storage;
 
 namespace Inklet.Services;
@@ -84,6 +86,39 @@ internal sealed class SettingsService
     {
         get => GetValue(nameof(WindowHeight), 600.0);
         set => SetValue(nameof(WindowHeight), value);
+    }
+
+    /// <summary>Active tab index from the last session.</summary>
+    internal int LastActiveTabIndex
+    {
+        get => GetValue(nameof(LastActiveTabIndex), 0);
+        set => SetValue(nameof(LastActiveTabIndex), value);
+    }
+
+    /// <summary>
+    /// Persisted list of open file paths. Null entries represent untitled tabs.
+    /// </summary>
+    internal IReadOnlyList<string?> SessionFilePaths
+    {
+        get
+        {
+            var json = GetValue<string>(nameof(SessionFilePaths), null!);
+            if (string.IsNullOrEmpty(json)) return [];
+            try
+            {
+                var raw = JsonSerializer.Deserialize<string?[]>(json);
+                return raw ?? [];
+            }
+            catch { return []; }
+        }
+        set
+        {
+            try
+            {
+                SetValue(nameof(SessionFilePaths), JsonSerializer.Serialize(value));
+            }
+            catch { }
+        }
     }
 
     private T GetValue<T>(string key, T defaultValue)

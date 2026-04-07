@@ -7,7 +7,7 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
-    Title="Untitled - Inklet">
+    Title="Inklet">
 
     <Window.SystemBackdrop>
         <MicaBackdrop />
@@ -27,6 +27,11 @@
                 <MenuFlyoutItem x:Name="MenuNew" Text="New" Click="MenuNew_Click">
                     <MenuFlyoutItem.KeyboardAccelerators>
                         <KeyboardAccelerator Modifiers="Control" Key="N" />
+                    </MenuFlyoutItem.KeyboardAccelerators>
+                </MenuFlyoutItem>
+                <MenuFlyoutItem x:Name="MenuNewTab" Text="New Tab" Click="MenuNewTab_Click">
+                    <MenuFlyoutItem.KeyboardAccelerators>
+                        <KeyboardAccelerator Modifiers="Control" Key="T" />
                     </MenuFlyoutItem.KeyboardAccelerators>
                 </MenuFlyoutItem>
                 <MenuFlyoutItem x:Name="MenuOpen" Text="Open..." Click="MenuOpen_Click">
@@ -156,30 +161,52 @@
             </MenuBarItem>
         </MenuBar>
 
-        <!-- Editor Area -->
+        <!-- Tab strip + editor area -->
         <Grid Grid.Row="1">
-            <TextBox x:Name="Editor"
-                     AcceptsReturn="True"
-                     TextWrapping="NoWrap"
-                     IsSpellCheckEnabled="False"
-                     FontFamily="Consolas"
-                     FontSize="14"
-                     Padding="8,4"
-                     BorderThickness="0"
-                     Background="Transparent"
-                     VerticalAlignment="Stretch"
-                     HorizontalAlignment="Stretch"
-                     ScrollViewer.VerticalScrollBarVisibility="Auto"
-                     ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                     TextChanged="Editor_TextChanged"
-                     SelectionChanged="Editor_SelectionChanged"
-                     AllowDrop="True"
-                     DragOver="Editor_DragOver"
-                     Drop="Editor_Drop"
-                     AutomationProperties.AutomationId="EditorTextBox" />
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
 
-            <!-- Find & Replace overlay (hidden by default) -->
-            <Border x:Name="FindReplaceBar" VerticalAlignment="Top" HorizontalAlignment="Right"
+            <TabView x:Name="TabStrip" Grid.Row="0"
+                     IsAddTabButtonVisible="True"
+                     CanReorderTabs="True"
+                     CanDragTabs="True"
+                     AddTabButtonClick="TabStrip_AddTabButtonClick"
+                     TabCloseRequested="TabStrip_TabCloseRequested"
+                     SelectionChanged="TabStrip_SelectionChanged"
+                     TabItemsChanged="TabStrip_TabItemsChanged"
+                     Background="Transparent"
+                     Padding="0">
+                <TabView.TabStripFooter>
+                    <Border Width="0" />
+                </TabView.TabStripFooter>
+            </TabView>
+
+            <!-- Editor + Find bar -->
+            <Grid Grid.Row="1">
+                <TextBox x:Name="Editor"
+                         AcceptsReturn="True"
+                         TextWrapping="NoWrap"
+                         IsSpellCheckEnabled="False"
+                         FontFamily="Consolas"
+                         FontSize="14"
+                         Padding="12,10"
+                         BorderThickness="0"
+                         Background="Transparent"
+                         VerticalAlignment="Stretch"
+                         HorizontalAlignment="Stretch"
+                         ScrollViewer.VerticalScrollBarVisibility="Auto"
+                         ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                         TextChanged="Editor_TextChanged"
+                         SelectionChanged="Editor_SelectionChanged"
+                         AllowDrop="True"
+                         DragOver="Editor_DragOver"
+                         Drop="Editor_Drop"
+                         AutomationProperties.AutomationId="EditorTextBox" />
+
+                <!-- Find & Replace overlay -->
+                <Border x:Name="FindReplaceBar" VerticalAlignment="Top" HorizontalAlignment="Right"
                     Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}"
                     BorderBrush="{ThemeResource SurfaceStrokeColorDefaultBrush}"
                     BorderThickness="1" CornerRadius="0,0,6,6" Padding="12,8"
@@ -215,6 +242,7 @@
                     </StackPanel>
                 </StackPanel>
             </Border>
+            </Grid>
         </Grid>
 
         <!-- Status Bar -->
