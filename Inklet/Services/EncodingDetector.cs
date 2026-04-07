@@ -8,14 +8,14 @@ namespace Inklet.Services;
 /// <summary>
 /// Detects encoding of text files using BOM analysis and statistical heuristics.
 /// </summary>
-internal static class EncodingDetector
+public static class EncodingDetector
 {
     /// <summary>
     /// Detects the encoding of a file by examining its byte order mark and content.
     /// </summary>
     /// <param name="data">Raw file bytes.</param>
     /// <returns>The detected encoding and whether a BOM was present.</returns>
-    internal static (Encoding Encoding, bool HasBom) Detect(byte[] data)
+    public static (Encoding Encoding, bool HasBom) Detect(byte[] data)
     {
         ArgumentNullException.ThrowIfNull(data);
 
@@ -31,7 +31,14 @@ internal static class EncodingDetector
             return bomResult.Value;
         }
 
-        // Use UTF.Unknown for statistical detection
+        // Check if the content is valid UTF-8 first — prefer UTF-8 over single-byte
+        // encodings because UTF-8 is the most common encoding and ASCII is a subset of it.
+        if (IsValidUtf8(data))
+        {
+            return (Encoding.UTF8, false);
+        }
+
+        // Use UTF.Unknown for statistical detection of non-UTF-8 encodings
         var detectionResult = CharsetDetector.DetectFromBytes(data);
         if (detectionResult.Detected is { } detected && detected.Confidence > 0.5f)
         {
@@ -44,12 +51,6 @@ internal static class EncodingDetector
             {
                 // Unknown encoding name, fall through
             }
-        }
-
-        // Check if the content is valid UTF-8
-        if (IsValidUtf8(data))
-        {
-            return (Encoding.UTF8, false);
         }
 
         // Default to system ANSI code page

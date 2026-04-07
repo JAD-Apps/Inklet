@@ -5,7 +5,7 @@ namespace Inklet.Models;
 /// <summary>
 /// Immutable snapshot of a loaded document's state.
 /// </summary>
-internal sealed record DocumentState
+public sealed record DocumentState
 {
     /// <summary>File path on disk, or null for untitled documents.</summary>
     public string? FilePath { get; init; }

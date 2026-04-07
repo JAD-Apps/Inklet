@@ -386,8 +386,7 @@ public sealed partial class MainWindow : Window
         var lineCount = CountLines(Editor.Text);
         var input = new TextBox
         {
-            PlaceholderText = $"Line number (1-{lineCount})",
-            AutomationProperties.AutomationId = "GoToLineInput"
+            PlaceholderText = $"Line number (1-{lineCount})"
         };
 
         var dialog = new ContentDialog

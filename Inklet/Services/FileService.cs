@@ -10,13 +10,13 @@ namespace Inklet.Services;
 /// <summary>
 /// Handles file I/O operations with encoding detection and large file support.
 /// </summary>
-internal static class FileService
+public static class FileService
 {
     /// <summary>
     /// Maximum file size (in bytes) to load entirely into memory. Files larger
     /// than this will still be loaded but trigger a progress indication.
     /// </summary>
-    internal const long LargeFileThreshold = 10 * 1024 * 1024; // 10 MB
+    public const long LargeFileThreshold = 10 * 1024 * 1024; // 10 MB
 
     /// <summary>
     /// Reads a file from disk with automatic encoding detection.
@@ -24,7 +24,7 @@ internal static class FileService
     /// <param name="filePath">Absolute path to the file.</param>
     /// <param name="cancellationToken">Cancellation token for large file operations.</param>
     /// <returns>The file content as a string and the detected document state.</returns>
-    internal static async Task<(string Content, DocumentState State)> ReadFileAsync(
+    public static async Task<(string Content, DocumentState State)> ReadFileAsync(
         string filePath, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(filePath))
@@ -62,7 +62,7 @@ internal static class FileService
     /// <param name="writeBom">Whether to write a byte order mark.</param>
     /// <param name="lineEnding">Line ending style to normalize to before writing.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    internal static async Task WriteFileAsync(
+    public static async Task WriteFileAsync(
         string filePath,
         string content,
         Encoding encoding,
@@ -107,7 +107,7 @@ internal static class FileService
     /// <summary>
     /// Returns the file size in bytes, or -1 if the file does not exist.
     /// </summary>
-    internal static long GetFileSize(string filePath)
+    public static long GetFileSize(string filePath)
     {
         try
         {

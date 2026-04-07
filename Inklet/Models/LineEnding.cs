@@ -3,7 +3,7 @@ namespace Inklet.Models;
 /// <summary>
 /// Represents detected or user-selected line ending style.
 /// </summary>
-internal enum LineEndingStyle
+public enum LineEndingStyle
 {
     /// <summary>Windows-style CR+LF (\r\n).</summary>
     CrLf,
@@ -21,12 +21,12 @@ internal enum LineEndingStyle
 /// <summary>
 /// Utility methods for detecting and converting line endings.
 /// </summary>
-internal static class LineEndingDetector
+public static class LineEndingDetector
 {
     /// <summary>
     /// Detects the predominant line ending style in the given text.
     /// </summary>
-    internal static LineEndingStyle Detect(string text)
+    public static LineEndingStyle Detect(string text)
     {
         if (string.IsNullOrEmpty(text))
         {
@@ -74,7 +74,7 @@ internal static class LineEndingDetector
     /// <summary>
     /// Returns the string representation of a line ending style.
     /// </summary>
-    internal static string GetLineEndingString(LineEndingStyle style) => style switch
+    public static string GetLineEndingString(LineEndingStyle style) => style switch
     {
         LineEndingStyle.CrLf => "\r\n",
         LineEndingStyle.Lf => "\n",
@@ -85,7 +85,7 @@ internal static class LineEndingDetector
     /// <summary>
     /// Returns a display label for the status bar.
     /// </summary>
-    internal static string GetDisplayName(LineEndingStyle style) => style switch
+    public static string GetDisplayName(LineEndingStyle style) => style switch
     {
         LineEndingStyle.CrLf => "Windows (CRLF)",
         LineEndingStyle.Lf => "Unix (LF)",
@@ -97,7 +97,7 @@ internal static class LineEndingDetector
     /// <summary>
     /// Normalizes all line endings in text to the specified style.
     /// </summary>
-    internal static string Normalize(string text, LineEndingStyle targetStyle)
+    public static string Normalize(string text, LineEndingStyle targetStyle)
     {
         if (string.IsNullOrEmpty(text))
         {

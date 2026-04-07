@@ -10,7 +10,6 @@
     <UseWinUI>true</UseWinUI>
     <WinUISDKReferences>false</WinUISDKReferences>
     <Nullable>enable</Nullable>
-    <ApplicationIcon>..\Inklet.png</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
