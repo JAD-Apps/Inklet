@@ -282,8 +282,11 @@ public sealed partial class MainWindow : Window
         => AddNewTab();
 
     private void TabStrip_TabCloseRequested(TabView sender, TabViewTabCloseRequestedEventArgs args)
+        => CloseTab(args.Tab);
+
+    private void CloseTab(TabViewItem tab)
     {
-        if (args.Tab.Tag is not TabSession session) return;
+        if (tab.Tag is not TabSession session) return;
 
         if (TabStrip.TabItems.Count == 1)
         {
@@ -302,7 +305,10 @@ public sealed partial class MainWindow : Window
         }
         else
         {
-            TabStrip.TabItems.Remove(args.Tab);
+            TabStrip.TabItems.Remove(tab);
+            // Persist remaining tabs immediately so a mid-session close is not lost
+            // if the app terminates unexpectedly before the next graceful shutdown.
+            PersistSession();
         }
     }
 
@@ -329,6 +335,12 @@ public sealed partial class MainWindow : Window
 
     private void MenuNewTab_Click(object sender, RoutedEventArgs e)
         => AddNewTab();
+
+    private void MenuCloseTab_Click(object sender, RoutedEventArgs e)
+    {
+        if (TabStrip.SelectedItem is TabViewItem tvi)
+            CloseTab(tvi);
+    }
 
     #endregion
 
@@ -513,6 +525,21 @@ public sealed partial class MainWindow : Window
     #region Edit Operations
 
     private void MenuUndo_Click(object sender, RoutedEventArgs e) => Editor.Undo();
+
+    private void MenuRedo_Click(object sender, RoutedEventArgs e)
+    {
+        // TextBox exposes Undo() but not Redo(); simulate Ctrl+Y so the
+        // control's internal redo stack is consumed.
+        Editor.Focus(FocusState.Programmatic);
+        const byte VK_CONTROL = 0x11;
+        const byte VK_Y = 0x59;
+        const uint KEYEVENTF_KEYUP = 0x0002;
+        keybd_event(VK_CONTROL, 0, 0, 0);
+        keybd_event(VK_Y, 0, 0, 0);
+        keybd_event(VK_Y, 0, KEYEVENTF_KEYUP, 0);
+        keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0);
+    }
+
     private void MenuCut_Click(object sender, RoutedEventArgs e) => Editor.CutSelectionToClipboard();
     private void MenuCopy_Click(object sender, RoutedEventArgs e) => Editor.CopySelectionToClipboard();
     private void MenuPaste_Click(object sender, RoutedEventArgs e) => Editor.PasteFromClipboard();
@@ -805,6 +832,11 @@ public sealed partial class MainWindow : Window
                 Verb = "print",
                 UseShellExecute = true
             });
+
+            // Best-effort cleanup: the spooler typically holds the file for a few seconds.
+            _ = Task.Delay(TimeSpan.FromSeconds(30)).ContinueWith(
+                _ => { try { File.Delete(tempFile); } catch { } },
+                TaskScheduler.Default);
         }
         catch (Exception ex)
         {
@@ -899,6 +931,17 @@ public sealed partial class MainWindow : Window
     private void Editor_SelectionChanged(object sender, RoutedEventArgs e)
     {
         UpdateCursorPosition();
+    }
+
+    private void Editor_PointerWheelChanged(object sender, PointerRoutedEventArgs e)
+    {
+        // Ctrl+Scroll adjusts zoom; let the TextBox handle plain scrolling normally.
+        if (e.KeyModifiers.HasFlag(Windows.System.VirtualKeyModifiers.Control))
+        {
+            var delta = e.GetCurrentPoint(Editor).Properties.MouseWheelDelta;
+            SetZoom(_zoomPercent + (delta > 0 ? 10 : -10));
+            e.Handled = true;
+        }
     }
 
     #endregion
@@ -1011,6 +1054,10 @@ public sealed partial class MainWindow : Window
         }
         return lines;
     }
+
+    // Simulates a Win32 key event so that the TextBox processes redo internally.
+    [DllImport("user32.dll")]
+    private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, nint dwExtraInfo);
 
     #endregion
 }

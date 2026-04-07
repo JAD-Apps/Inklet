@@ -34,6 +34,11 @@
                         <KeyboardAccelerator Modifiers="Control" Key="T" />
                     </MenuFlyoutItem.KeyboardAccelerators>
                 </MenuFlyoutItem>
+                <MenuFlyoutItem x:Name="MenuCloseTab" Text="Close Tab" Click="MenuCloseTab_Click">
+                    <MenuFlyoutItem.KeyboardAccelerators>
+                        <KeyboardAccelerator Modifiers="Control" Key="W" />
+                    </MenuFlyoutItem.KeyboardAccelerators>
+                </MenuFlyoutItem>
                 <MenuFlyoutItem x:Name="MenuOpen" Text="Open..." Click="MenuOpen_Click">
                     <MenuFlyoutItem.KeyboardAccelerators>
                         <KeyboardAccelerator Modifiers="Control" Key="O" />
@@ -67,6 +72,8 @@
                         <KeyboardAccelerator Modifiers="Control" Key="Z" />
                     </MenuFlyoutItem.KeyboardAccelerators>
                 </MenuFlyoutItem>
+                <MenuFlyoutItem x:Name="MenuRedo" Text="Redo" Click="MenuRedo_Click"
+                                KeyboardAcceleratorTextOverride="Ctrl+Y" />
                 <MenuFlyoutSeparator />
                 <MenuFlyoutItem x:Name="MenuCut" Text="Cut" Click="MenuCut_Click">
                     <MenuFlyoutItem.KeyboardAccelerators>
@@ -200,6 +207,7 @@
                          ScrollViewer.HorizontalScrollBarVisibility="Auto"
                          TextChanged="Editor_TextChanged"
                          SelectionChanged="Editor_SelectionChanged"
+                         PointerWheelChanged="Editor_PointerWheelChanged"
                          AllowDrop="True"
                          DragOver="Editor_DragOver"
                          Drop="Editor_Drop"
