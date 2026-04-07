@@ -228,6 +228,7 @@ public sealed partial class MainWindow : Window
         Editor.TextWrapping = _settings.WordWrap ? TextWrapping.Wrap : TextWrapping.NoWrap;
         UpdateTitle(session);
         UpdateStatusBar(session);
+        Editor.Focus(FocusState.Programmatic);
     }
 
     private void SaveCurrentTabState()
@@ -281,6 +282,7 @@ public sealed partial class MainWindow : Window
             RefreshTabHeader(session);
             UpdateTitle(session);
             UpdateStatusBar(session);
+            Editor.Focus(FocusState.Programmatic);
         }
         else
         {
