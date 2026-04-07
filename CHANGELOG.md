@@ -4,6 +4,17 @@ All notable changes to Inklet are documented in this file.
 
 ---
 
+## [1.0.0] - 2026-07-05
+
+### Fixed
+- Print dialog (`PrintDlgEx`) crash — `AccessViolationException` caused by a null `lpPageRanges` pointer; a one-element `PRINTPAGERANGE` buffer is now allocated before calling the API (as required by the Win32 contract even when `PD_NOPAGENUMS` is set)
+- Print dialog (`PrintDlgEx`) crash — `AccessViolationException` caused by invoking the COM-based `PrintDlgEx` on a `Task.Run` ThreadPool thread (MTA); the call now runs on a dedicated STA thread via `TaskCompletionSource<bool>`
+
+### Changed
+- Default font size changed from 14 pt to 12 pt
+
+---
+
 ## [0.9.5] - 2026-07-04
 
 ### Added

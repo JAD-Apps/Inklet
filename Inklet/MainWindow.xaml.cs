@@ -16,6 +16,7 @@ using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Graphics;
@@ -1207,20 +1208,30 @@ public sealed partial class MainWindow : Window
 
         try
         {
-            // PrintDocument / PrintDialog are blocking Win32 calls — run on background thread.
-            bool printed = await Task.Run(() =>
+            // PrintDlgEx is COM-based and shows UI — it must run on a dedicated STA thread.
+            // Task.Run uses ThreadPool threads which are MTA, causing a COM null-vtable crash.
+            var tcs = new TaskCompletionSource<bool>();
+            var staThread = new Thread(() =>
             {
-                var svc = new PrintService(
-                    text,
-                    fileName,
-                    _settings.FontFamily,
-                    (float)_settings.FontSize,
-                    _settings.FontWeight == "Bold",
-                    _settings.FontStyle == "Italic",
-                    setup);
+                try
+                {
+                    var svc = new PrintService(
+                        text,
+                        fileName,
+                        _settings.FontFamily,
+                        (float)_settings.FontSize,
+                        _settings.FontWeight == "Bold",
+                        _settings.FontStyle == "Italic",
+                        setup);
 
-                return svc.ShowDialogAndPrint(hwnd);
+                    tcs.SetResult(svc.ShowDialogAndPrint(hwnd));
+                }
+                catch (Exception ex) { tcs.SetException(ex); }
             });
+            staThread.SetApartmentState(ApartmentState.STA);
+            staThread.IsBackground = true;
+            staThread.Start();
+            bool printed = await tcs.Task;
 
             // 'printed' is false when the user cancelled — nothing to report.
             _ = printed;

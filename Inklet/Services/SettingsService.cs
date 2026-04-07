@@ -50,7 +50,7 @@ internal sealed class SettingsService
     /// <summary>Font size in points.</summary>
     internal double FontSize
     {
-        get => GetValue(nameof(FontSize), 14.0);
+        get => GetValue(nameof(FontSize), 12.0);
         set => SetValue(nameof(FontSize), value);
     }
 

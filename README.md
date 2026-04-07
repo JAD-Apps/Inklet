@@ -72,6 +72,8 @@ Inklet faithfully recreates the classic Windows 10 Notepad experience with moder
 2. Set **Inklet (Package)** as the startup project
 3. Build and run (F5)
 
+> Default editor font size is 12 pt (Consolas).
+
 ## Testing
 
 ```bash

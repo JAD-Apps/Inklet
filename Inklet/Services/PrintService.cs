@@ -165,40 +165,51 @@ internal sealed class PrintService
     /// </summary>
     internal bool ShowDialogAndPrint(IntPtr hwnd)
     {
-        var dlg = new PRINTDLGEX
+        // PrintDlgEx requires lpPageRanges to be a valid pointer (non-null) even when
+        // PD_NOPAGENUMS is set. PRINTPAGERANGE is two DWORDs (nFromPage + nToPage = 8 bytes).
+        IntPtr pageRangeBuffer = Marshal.AllocHGlobal(8);
+        try
         {
-            lStructSize   = (uint)Marshal.SizeOf<PRINTDLGEX>(),
-            hwndOwner     = hwnd,
-            Flags         = PD_RETURNDC | PD_NOPAGENUMS | PD_NOSELECTION | PD_USEDEVMODECOPIES,
-            nStartPage    = START_PAGE_GENERAL,
-            nMinPage      = 1,
-            nMaxPage      = 1,
-            nMaxPageRanges = 1
-        };
+            var dlg = new PRINTDLGEX
+            {
+                lStructSize    = (uint)Marshal.SizeOf<PRINTDLGEX>(),
+                hwndOwner      = hwnd,
+                Flags          = PD_RETURNDC | PD_NOPAGENUMS | PD_NOSELECTION | PD_USEDEVMODECOPIES,
+                nStartPage     = START_PAGE_GENERAL,
+                nMinPage       = 1,
+                nMaxPage       = 1,
+                nMaxPageRanges = 1,
+                lpPageRanges   = pageRangeBuffer
+            };
 
-        int hr = PrintDlgEx(ref dlg);
-        if (hr != 0 || dlg.dwResultAction != PD_RESULT_PRINT)
-        {
-            // Clean up any handles the dialog allocated
+            int hr = PrintDlgEx(ref dlg);
+            if (hr != 0 || dlg.dwResultAction != PD_RESULT_PRINT)
+            {
+                // Clean up any handles the dialog allocated
+                FreeHandle(ref dlg.hDevMode);
+                FreeHandle(ref dlg.hDevNames);
+                if (dlg.hDC != IntPtr.Zero) DeleteDC(dlg.hDC);
+                return false;
+            }
+
+            // Extract printer name from hDevNames so PrintDocument uses the right printer.
+            string? printerName = GetPrinterName(dlg.hDevNames);
+            int copies = (int)Math.Max(1, dlg.nCopies);
+            bool collate = (dlg.Flags & PD_COLLATE) != 0;
+
             FreeHandle(ref dlg.hDevMode);
             FreeHandle(ref dlg.hDevNames);
             if (dlg.hDC != IntPtr.Zero) DeleteDC(dlg.hDC);
-            return false;
+
+            // Now drive PrintDocument with the chosen printer.
+            using var doc = BuildDocument(printerName, copies, collate);
+            doc.Print();
+            return true;
         }
-
-        // Extract printer name from hDevNames so PrintDocument uses the right printer.
-        string? printerName = GetPrinterName(dlg.hDevNames);
-        int copies = (int)Math.Max(1, dlg.nCopies);
-        bool collate = (dlg.Flags & PD_COLLATE) != 0;
-
-        FreeHandle(ref dlg.hDevMode);
-        FreeHandle(ref dlg.hDevNames);
-        if (dlg.hDC != IntPtr.Zero) DeleteDC(dlg.hDC);
-
-        // Now drive PrintDocument with the chosen printer.
-        using var doc = BuildDocument(printerName, copies, collate);
-        doc.Print();
-        return true;
+        finally
+        {
+            Marshal.FreeHGlobal(pageRangeBuffer);
+        }
     }
 
     [DllImport("gdi32.dll")]
