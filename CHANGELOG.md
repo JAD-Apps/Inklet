@@ -1,10 +1,10 @@
-﻿# Changelog
+# Changelog
 
 All notable changes to Inklet are documented in this file.
 
 ---
 
-## [1.0.0] - 2026-07-05
+## [1.0.0] - 2026-04-07
 
 ### Fixed
 - Print dialog (`PrintDlgEx`) crash — `AccessViolationException` caused by a null `lpPageRanges` pointer; a one-element `PRINTPAGERANGE` buffer is now allocated before calling the API (as required by the Win32 contract even when `PD_NOPAGENUMS` is set)
@@ -15,7 +15,7 @@ All notable changes to Inklet are documented in this file.
 
 ---
 
-## [0.9.5] - 2026-07-04
+## [0.9.5] - 2026-04-07
 
 ### Added
 Save prompt on tab close: Save / Don't Save / Cancel dialog when closing a modified tab
@@ -31,7 +31,7 @@ Package manifest version 0.9.4.0 -> 0.9.5.0
 
 ---
 
-## [0.9.4] - 2026-07-04
+## [0.9.4] - 2026-04-07
 
 ### Added
 Custom title bar with app icon, label, gear menu button, scroll-left/right buttons
@@ -49,7 +49,7 @@ Package manifest version 0.9.2.0 -> 0.9.4.0
 
 ---
 
-## [0.9.3] - 2026-07-04
+## [0.9.3] - 2026-04-07
 
 ### Documentation
 - README - added Redo, Close Tab (Ctrl+W), Ctrl+Scroll zoom to feature list; added Tabs & Session section; added File Associations section; fixed Undo description; precise keyboard notation throughout
@@ -57,7 +57,7 @@ Package manifest version 0.9.2.0 -> 0.9.4.0
 
 ---
 
-## [0.9.2] - 2026-07-04
+## [0.9.2] - 2026-04-07
 
 ### Added
 - Redo - Edit > Redo (Ctrl+Y); the underlying TextBox redo stack is triggered so multi-step redo works
@@ -73,7 +73,7 @@ Package manifest version 0.9.2.0 -> 0.9.4.0
 
 ---
 
-## [0.9.1] - 2026-07-04
+## [0.9.1] - 2026-04-07
 
 ### Added
 - File type associations - manifest declares windows.fileTypeAssociation for .txt .log .ini .cfg .md .xml .json .csv .yaml .yml
