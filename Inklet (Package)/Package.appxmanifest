@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 
 <Package
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
@@ -10,7 +10,7 @@
   <Identity
     Name="JADApps.Inklet"
     Publisher="CN=JohnD"
-    Version="1.0.1.0" />
+    Version="0.9.1.0" />
 
   <mp:PhoneIdentity PhoneProductId="ae7e3603-d765-4654-9902-853db767bcc5" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 
@@ -42,6 +42,25 @@
         <uap:DefaultTile Wide310x150Logo="Images\Wide310x150Logo.png" />
         <uap:SplashScreen Image="Images\SplashScreen.png" />
       </uap:VisualElements>
+      <Extensions>
+        <uap:Extension Category="windows.fileTypeAssociation">
+          <uap:FileTypeAssociation Name="textfile">
+            <uap:DisplayName>Text Document</uap:DisplayName>
+            <uap:SupportedFileTypes>
+              <uap:FileType>.txt</uap:FileType>
+              <uap:FileType>.log</uap:FileType>
+              <uap:FileType>.ini</uap:FileType>
+              <uap:FileType>.cfg</uap:FileType>
+              <uap:FileType>.md</uap:FileType>
+              <uap:FileType>.xml</uap:FileType>
+              <uap:FileType>.json</uap:FileType>
+              <uap:FileType>.csv</uap:FileType>
+              <uap:FileType>.yaml</uap:FileType>
+              <uap:FileType>.yml</uap:FileType>
+            </uap:SupportedFileTypes>
+          </uap:FileTypeAssociation>
+        </uap:Extension>
+      </Extensions>
     </Application>
   </Applications>
 
