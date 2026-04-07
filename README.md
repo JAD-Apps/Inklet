@@ -84,6 +84,10 @@ dotnet test Inklet.Tests
 
 This project is licensed for personal, non-commercial use only. See [LICENSE](LICENSE) for details.
 
+## Privacy
+
+Inklet collects no data. See [PRIVACY_POLICY.md](PRIVACY_POLICY.md) for details.
+
 ## Author
 
 John Donnelly â€” [JAD Apps](https://github.com/John-Donnelly)
