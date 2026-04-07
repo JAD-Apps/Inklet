@@ -7,13 +7,250 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
-    Title="Inklet">
+    Title="Untitled - Inklet">
 
     <Window.SystemBackdrop>
         <MicaBackdrop />
     </Window.SystemBackdrop>
 
     <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
 
+        <!-- Menu Bar -->
+        <MenuBar Grid.Row="0">
+            <!-- File Menu -->
+            <MenuBarItem Title="File">
+                <MenuFlyoutItem x:Name="MenuNew" Text="New" Click="MenuNew_Click">
+                    <MenuFlyoutItem.KeyboardAccelerators>
+                        <KeyboardAccelerator Modifiers="Control" Key="N" />
+                    </MenuFlyoutItem.KeyboardAccelerators>
+                </MenuFlyoutItem>
+                <MenuFlyoutItem x:Name="MenuOpen" Text="Open..." Click="MenuOpen_Click">
+                    <MenuFlyoutItem.KeyboardAccelerators>
+                        <KeyboardAccelerator Modifiers="Control" Key="O" />
+                    </MenuFlyoutItem.KeyboardAccelerators>
+                </MenuFlyoutItem>
+                <MenuFlyoutItem x:Name="MenuSave" Text="Save" Click="MenuSave_Click">
+                    <MenuFlyoutItem.KeyboardAccelerators>
+                        <KeyboardAccelerator Modifiers="Control" Key="S" />
+                    </MenuFlyoutItem.KeyboardAccelerators>
+                </MenuFlyoutItem>
+                <MenuFlyoutItem x:Name="MenuSaveAs" Text="Save As..." Click="MenuSaveAs_Click">
+                    <MenuFlyoutItem.KeyboardAccelerators>
+                        <KeyboardAccelerator Modifiers="Control,Shift" Key="S" />
+                    </MenuFlyoutItem.KeyboardAccelerators>
+                </MenuFlyoutItem>
+                <MenuFlyoutSeparator />
+                <MenuFlyoutItem x:Name="MenuPageSetup" Text="Page Setup..." Click="MenuPageSetup_Click" />
+                <MenuFlyoutItem x:Name="MenuPrint" Text="Print..." Click="MenuPrint_Click">
+                    <MenuFlyoutItem.KeyboardAccelerators>
+                        <KeyboardAccelerator Modifiers="Control" Key="P" />
+                    </MenuFlyoutItem.KeyboardAccelerators>
+                </MenuFlyoutItem>
+                <MenuFlyoutSeparator />
+                <MenuFlyoutItem x:Name="MenuExit" Text="Exit" Click="MenuExit_Click" />
+            </MenuBarItem>
+
+            <!-- Edit Menu -->
+            <MenuBarItem Title="Edit">
+                <MenuFlyoutItem x:Name="MenuUndo" Text="Undo" Click="MenuUndo_Click">
+                    <MenuFlyoutItem.KeyboardAccelerators>
+                        <KeyboardAccelerator Modifiers="Control" Key="Z" />
+                    </MenuFlyoutItem.KeyboardAccelerators>
+                </MenuFlyoutItem>
+                <MenuFlyoutSeparator />
+                <MenuFlyoutItem x:Name="MenuCut" Text="Cut" Click="MenuCut_Click">
+                    <MenuFlyoutItem.KeyboardAccelerators>
+                        <KeyboardAccelerator Modifiers="Control" Key="X" />
+                    </MenuFlyoutItem.KeyboardAccelerators>
+                </MenuFlyoutItem>
+                <MenuFlyoutItem x:Name="MenuCopy" Text="Copy" Click="MenuCopy_Click">
+                    <MenuFlyoutItem.KeyboardAccelerators>
+                        <KeyboardAccelerator Modifiers="Control" Key="C" />
+                    </MenuFlyoutItem.KeyboardAccelerators>
+                </MenuFlyoutItem>
+                <MenuFlyoutItem x:Name="MenuPaste" Text="Paste" Click="MenuPaste_Click">
+                    <MenuFlyoutItem.KeyboardAccelerators>
+                        <KeyboardAccelerator Modifiers="Control" Key="V" />
+                    </MenuFlyoutItem.KeyboardAccelerators>
+                </MenuFlyoutItem>
+                <MenuFlyoutItem x:Name="MenuDelete" Text="Delete" Click="MenuDelete_Click">
+                    <MenuFlyoutItem.KeyboardAccelerators>
+                        <KeyboardAccelerator Key="Delete" />
+                    </MenuFlyoutItem.KeyboardAccelerators>
+                </MenuFlyoutItem>
+                <MenuFlyoutSeparator />
+                <MenuFlyoutItem x:Name="MenuFind" Text="Find..." Click="MenuFind_Click">
+                    <MenuFlyoutItem.KeyboardAccelerators>
+                        <KeyboardAccelerator Modifiers="Control" Key="F" />
+                    </MenuFlyoutItem.KeyboardAccelerators>
+                </MenuFlyoutItem>
+                <MenuFlyoutItem x:Name="MenuFindNext" Text="Find Next" Click="MenuFindNext_Click">
+                    <MenuFlyoutItem.KeyboardAccelerators>
+                        <KeyboardAccelerator Key="F3" />
+                    </MenuFlyoutItem.KeyboardAccelerators>
+                </MenuFlyoutItem>
+                <MenuFlyoutItem x:Name="MenuFindPrevious" Text="Find Previous" Click="MenuFindPrevious_Click">
+                    <MenuFlyoutItem.KeyboardAccelerators>
+                        <KeyboardAccelerator Modifiers="Shift" Key="F3" />
+                    </MenuFlyoutItem.KeyboardAccelerators>
+                </MenuFlyoutItem>
+                <MenuFlyoutItem x:Name="MenuReplace" Text="Replace..." Click="MenuReplace_Click">
+                    <MenuFlyoutItem.KeyboardAccelerators>
+                        <KeyboardAccelerator Modifiers="Control" Key="H" />
+                    </MenuFlyoutItem.KeyboardAccelerators>
+                </MenuFlyoutItem>
+                <MenuFlyoutItem x:Name="MenuGoTo" Text="Go To..." Click="MenuGoTo_Click">
+                    <MenuFlyoutItem.KeyboardAccelerators>
+                        <KeyboardAccelerator Modifiers="Control" Key="G" />
+                    </MenuFlyoutItem.KeyboardAccelerators>
+                </MenuFlyoutItem>
+                <MenuFlyoutSeparator />
+                <MenuFlyoutItem x:Name="MenuSelectAll" Text="Select All" Click="MenuSelectAll_Click">
+                    <MenuFlyoutItem.KeyboardAccelerators>
+                        <KeyboardAccelerator Modifiers="Control" Key="A" />
+                    </MenuFlyoutItem.KeyboardAccelerators>
+                </MenuFlyoutItem>
+                <MenuFlyoutItem x:Name="MenuTimeDate" Text="Time/Date" Click="MenuTimeDate_Click">
+                    <MenuFlyoutItem.KeyboardAccelerators>
+                        <KeyboardAccelerator Key="F5" />
+                    </MenuFlyoutItem.KeyboardAccelerators>
+                </MenuFlyoutItem>
+            </MenuBarItem>
+
+            <!-- Format Menu -->
+            <MenuBarItem Title="Format">
+                <ToggleMenuFlyoutItem x:Name="MenuWordWrap" Text="Word Wrap" Click="MenuWordWrap_Click" />
+                <MenuFlyoutItem x:Name="MenuFont" Text="Font..." Click="MenuFont_Click" />
+            </MenuBarItem>
+
+            <!-- View Menu -->
+            <MenuBarItem Title="View">
+                <MenuFlyoutSubItem Text="Zoom">
+                    <MenuFlyoutItem x:Name="MenuZoomIn" Text="Zoom In" Click="MenuZoomIn_Click">
+                        <MenuFlyoutItem.KeyboardAccelerators>
+                            <KeyboardAccelerator Modifiers="Control" Key="Add" />
+                        </MenuFlyoutItem.KeyboardAccelerators>
+                    </MenuFlyoutItem>
+                    <MenuFlyoutItem x:Name="MenuZoomOut" Text="Zoom Out" Click="MenuZoomOut_Click">
+                        <MenuFlyoutItem.KeyboardAccelerators>
+                            <KeyboardAccelerator Modifiers="Control" Key="Subtract" />
+                        </MenuFlyoutItem.KeyboardAccelerators>
+                    </MenuFlyoutItem>
+                    <MenuFlyoutItem x:Name="MenuZoomReset" Text="Restore Default Zoom" Click="MenuZoomReset_Click">
+                        <MenuFlyoutItem.KeyboardAccelerators>
+                            <KeyboardAccelerator Modifiers="Control" Key="Number0" />
+                        </MenuFlyoutItem.KeyboardAccelerators>
+                    </MenuFlyoutItem>
+                </MenuFlyoutSubItem>
+                <ToggleMenuFlyoutItem x:Name="MenuStatusBar" Text="Status Bar" Click="MenuStatusBar_Click" IsChecked="True" />
+            </MenuBarItem>
+
+            <!-- Help Menu -->
+            <MenuBarItem Title="Help">
+                <MenuFlyoutItem x:Name="MenuAbout" Text="About Inklet" Click="MenuAbout_Click" />
+            </MenuBarItem>
+        </MenuBar>
+
+        <!-- Editor Area -->
+        <Grid Grid.Row="1">
+            <TextBox x:Name="Editor"
+                     AcceptsReturn="True"
+                     TextWrapping="NoWrap"
+                     IsSpellCheckEnabled="False"
+                     FontFamily="Consolas"
+                     FontSize="14"
+                     Padding="8,4"
+                     BorderThickness="0"
+                     Background="Transparent"
+                     VerticalAlignment="Stretch"
+                     HorizontalAlignment="Stretch"
+                     ScrollViewer.VerticalScrollBarVisibility="Auto"
+                     ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                     TextChanged="Editor_TextChanged"
+                     SelectionChanged="Editor_SelectionChanged"
+                     AllowDrop="True"
+                     DragOver="Editor_DragOver"
+                     Drop="Editor_Drop"
+                     AutomationProperties.AutomationId="EditorTextBox" />
+
+            <!-- Find & Replace overlay (hidden by default) -->
+            <Border x:Name="FindReplaceBar" VerticalAlignment="Top" HorizontalAlignment="Right"
+                    Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource SurfaceStrokeColorDefaultBrush}"
+                    BorderThickness="1" CornerRadius="0,0,6,6" Padding="12,8"
+                    Margin="0,0,16,0" Visibility="Collapsed">
+                <StackPanel Spacing="6">
+                    <StackPanel Orientation="Horizontal" Spacing="4">
+                        <TextBox x:Name="FindTextBox" PlaceholderText="Find..." Width="200" Height="32"
+                                 KeyDown="FindTextBox_KeyDown"
+                                 AutomationProperties.AutomationId="FindTextBox" />
+                        <Button x:Name="FindPrevButton" Content="&#x25B2;" ToolTipService.ToolTip="Find Previous"
+                                Click="FindPrev_Click" Width="32" Height="32" Padding="0"
+                                AutomationProperties.AutomationId="FindPrevButton" />
+                        <Button x:Name="FindNextButton" Content="&#x25BC;" ToolTipService.ToolTip="Find Next"
+                                Click="FindNext_Click" Width="32" Height="32" Padding="0"
+                                AutomationProperties.AutomationId="FindNextButton" />
+                        <Button x:Name="CloseFindButton" Content="&#x2715;" ToolTipService.ToolTip="Close"
+                                Click="CloseFindBar_Click" Width="32" Height="32" Padding="0"
+                                AutomationProperties.AutomationId="CloseFindButton" />
+                    </StackPanel>
+                    <StackPanel x:Name="ReplacePanel" Orientation="Horizontal" Spacing="4" Visibility="Collapsed">
+                        <TextBox x:Name="ReplaceTextBox" PlaceholderText="Replace..." Width="200" Height="32"
+                                 AutomationProperties.AutomationId="ReplaceTextBox" />
+                        <Button x:Name="ReplaceButton" Content="Replace" ToolTipService.ToolTip="Replace"
+                                Click="Replace_Click" Height="32"
+                                AutomationProperties.AutomationId="ReplaceButton" />
+                        <Button x:Name="ReplaceAllButton" Content="All" ToolTipService.ToolTip="Replace All"
+                                Click="ReplaceAll_Click" Height="32"
+                                AutomationProperties.AutomationId="ReplaceAllButton" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <CheckBox x:Name="FindMatchCase" Content="Match case"
+                                  AutomationProperties.AutomationId="FindMatchCase" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <!-- Status Bar -->
+        <Border x:Name="StatusBarBorder" Grid.Row="2" Padding="12,4"
+                Background="{ThemeResource LayerFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                BorderThickness="0,1,0,0">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <TextBlock x:Name="StatusBarPosition" Grid.Column="0" FontSize="12"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                           VerticalAlignment="Center" Text="Ln 1, Col 1" />
+
+                <Border Grid.Column="1" Width="1" Margin="12,0" VerticalAlignment="Stretch"
+                        Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
+
+                <TextBlock x:Name="StatusBarZoom" Grid.Column="2" FontSize="12"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                           VerticalAlignment="Center" Text="100%" />
+
+                <TextBlock x:Name="StatusBarLineEnding" Grid.Column="3" FontSize="12"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                           VerticalAlignment="Center" Text="Windows (CRLF)" Margin="12,0,0,0" />
+
+                <TextBlock x:Name="StatusBarEncoding" Grid.Column="4" FontSize="12"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                           VerticalAlignment="Center" Text="UTF-8" Margin="12,0,0,0" />
+            </Grid>
+        </Border>
     </Grid>
 </Window>
