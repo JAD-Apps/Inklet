@@ -4,6 +4,14 @@ All notable changes to Inklet are documented in this file.
 
 ---
 
+## [1.0.4] - 2026-04-08
+
+### Fixed
+- App crashed immediately on launch from the Microsoft Store (`REGDB_E_CLASSNOTREG`) — the WAP packaging project had `WinUISDKReferences=false` and used individual `Microsoft.WindowsAppSDK.*` packages, so the SDK's MSBuild targets never injected a `PackageDependency` for the Windows App SDK runtime into the manifest; the Store installer therefore never co-installed `Microsoft.WindowsAppRuntime.1.8`, leaving WinUI 3 COM classes unregistered; fixed by adding `Microsoft.WindowsAppSDK` with `<IncludeAssets>build</IncludeAssets>` to the WAP project so the dependency is declared correctly
+- Window reopened at screen-overflow dimensions when it had been closed while maximised — `SaveWindowSize` was unconditionally writing `AppWindow.Size` (which equals the screen resolution when maximised) as the restored size; the saved size is now only updated when the window is not maximised, and a new `WindowMaximized` setting causes the window to reopen via `OverlappedPresenter.Maximize()` instead of `ResizeWindow()`
+
+---
+
 ## [1.0.3] - 2026-04-08
 
 ### Fixed
