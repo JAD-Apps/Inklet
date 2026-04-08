@@ -336,7 +336,9 @@ public sealed partial class MainWindow : Window
             .Select(tvi => tvi.Tag is TabSession s ? new PersistedTabData
             {
                 FilePath = s.FilePath,
-                Content = s.Content,
+                // Only persist content for untitled tabs or tabs with unsaved changes;
+                // unmodified file-backed tabs will be reloaded from disk on next launch.
+                Content = (s.FilePath is not null && !s.IsModified) ? string.Empty : s.Content,
                 IsModified = s.IsModified,
                 CursorPosition = s.CursorPosition,
                 EncodingCodePage = s.Document.Encoding.CodePage,
@@ -744,6 +746,22 @@ public sealed partial class MainWindow : Window
     {
         try
         {
+            // Warn on binary files before attempting to load
+            if (FileService.IsBinaryFile(filePath))
+            {
+                var dialog = new ContentDialog
+                {
+                    Title = "Binary File",
+                    Content = $"{Path.GetFileName(filePath)} appears to be a binary file " +
+                              "and will not display correctly as text.",
+                    PrimaryButtonText = "Open Anyway",
+                    CloseButtonText = "Cancel",
+                    DefaultButton = ContentDialogButton.Close,
+                    XamlRoot = Content.XamlRoot
+                };
+                if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+            }
+
             var fileSize = FileService.GetFileSize(filePath);
             if (fileSize > FileService.LargeFileThreshold)
             {

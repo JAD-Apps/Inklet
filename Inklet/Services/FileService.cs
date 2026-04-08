@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Threading;
@@ -118,5 +119,67 @@ public static class FileService
         {
             return -1;
         }
+    }
+
+    /// <summary>
+    /// File extensions that are known binary formats and should not be opened as text.
+    /// </summary>
+    private static readonly HashSet<string> s_binaryExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        // Executables / libraries
+        ".exe", ".dll", ".sys", ".ocx", ".drv", ".com", ".scr",
+        // Installers / packages
+        ".msi", ".msp", ".msix", ".msixbundle", ".appx", ".appxbundle",
+        // Archives
+        ".zip", ".7z", ".rar", ".tar", ".gz", ".bz2", ".xz", ".cab", ".iso", ".dmg",
+        // Images
+        ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".tiff", ".tif", ".webp", ".svg",
+        // Audio / Video
+        ".mp3", ".wav", ".flac", ".aac", ".ogg", ".wma",
+        ".mp4", ".avi", ".mkv", ".mov", ".wmv", ".flv", ".webm",
+        // Documents (binary)
+        ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+        // Databases
+        ".db", ".sqlite", ".mdb", ".accdb",
+        // .NET / Java
+        ".pdb", ".nupkg", ".jar", ".class",
+        // Fonts
+        ".ttf", ".otf", ".woff", ".woff2",
+        // Other
+        ".bin", ".dat", ".o", ".obj", ".lib", ".a", ".so", ".dylib",
+    };
+
+    /// <summary>
+    /// Determines whether a file appears to be a binary (non-text) file.
+    /// Checks the file extension first, then sniffs the first 8 KB for NUL bytes.
+    /// </summary>
+    /// <param name="filePath">Absolute path to the file.</param>
+    /// <returns><c>true</c> if the file is likely binary; <c>false</c> if it appears to be text.</returns>
+    public static bool IsBinaryFile(string filePath)
+    {
+        ArgumentNullException.ThrowIfNull(filePath);
+
+        var ext = Path.GetExtension(filePath);
+        if (!string.IsNullOrEmpty(ext) && s_binaryExtensions.Contains(ext))
+            return true;
+
+        // Sniff the first 8 KB for NUL bytes — a strong indicator of binary content.
+        try
+        {
+            using var stream = File.OpenRead(filePath);
+            var buffer = new byte[Math.Min(8192, stream.Length)];
+            int bytesRead = stream.Read(buffer, 0, buffer.Length);
+            for (int i = 0; i < bytesRead; i++)
+            {
+                if (buffer[i] == 0x00)
+                    return true;
+            }
+        }
+        catch
+        {
+            // If we can't read the file, let the caller handle the error later.
+        }
+
+        return false;
     }
 }

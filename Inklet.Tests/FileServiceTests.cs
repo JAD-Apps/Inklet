@@ -207,4 +207,126 @@ public class FileServiceTests
     {
         Assert.AreEqual(10 * 1024 * 1024, FileService.LargeFileThreshold);
     }
+
+    // -----------------------------------------------------------------------
+    // IsBinaryFile — extension-based detection
+    // -----------------------------------------------------------------------
+
+    [TestMethod]
+    public void WhenFileHasExeExtensionThenIsBinaryTrue()
+    {
+        var filePath = Path.Combine(_testDir, "app.exe");
+        File.WriteAllText(filePath, "MZ");
+
+        Assert.IsTrue(FileService.IsBinaryFile(filePath));
+    }
+
+    [TestMethod]
+    public void WhenFileHasDllExtensionThenIsBinaryTrue()
+    {
+        var filePath = Path.Combine(_testDir, "lib.dll");
+        File.WriteAllText(filePath, "MZ");
+
+        Assert.IsTrue(FileService.IsBinaryFile(filePath));
+    }
+
+    [TestMethod]
+    public void WhenFileHasZipExtensionThenIsBinaryTrue()
+    {
+        var filePath = Path.Combine(_testDir, "archive.zip");
+        File.WriteAllText(filePath, "PK");
+
+        Assert.IsTrue(FileService.IsBinaryFile(filePath));
+    }
+
+    [TestMethod]
+    public void WhenFileHasPngExtensionThenIsBinaryTrue()
+    {
+        var filePath = Path.Combine(_testDir, "image.png");
+        File.WriteAllBytes(filePath, [0x89, 0x50, 0x4E, 0x47]);
+
+        Assert.IsTrue(FileService.IsBinaryFile(filePath));
+    }
+
+    [TestMethod]
+    public void WhenFileHasPdfExtensionThenIsBinaryTrue()
+    {
+        var filePath = Path.Combine(_testDir, "document.pdf");
+        File.WriteAllText(filePath, "%PDF-1.4");
+
+        Assert.IsTrue(FileService.IsBinaryFile(filePath));
+    }
+
+    [TestMethod]
+    public void WhenFileHasMsixExtensionThenIsBinaryTrue()
+    {
+        var filePath = Path.Combine(_testDir, "package.msix");
+        File.WriteAllText(filePath, "PK");
+
+        Assert.IsTrue(FileService.IsBinaryFile(filePath));
+    }
+
+    [TestMethod]
+    public void WhenFileHasTxtExtensionThenIsBinaryFalse()
+    {
+        var filePath = Path.Combine(_testDir, "readme.txt");
+        File.WriteAllText(filePath, "Hello World");
+
+        Assert.IsFalse(FileService.IsBinaryFile(filePath));
+    }
+
+    [TestMethod]
+    public void WhenFileHasCsExtensionThenIsBinaryFalse()
+    {
+        var filePath = Path.Combine(_testDir, "Program.cs");
+        File.WriteAllText(filePath, "using System;");
+
+        Assert.IsFalse(FileService.IsBinaryFile(filePath));
+    }
+
+    // -----------------------------------------------------------------------
+    // IsBinaryFile — NUL-byte sniffing
+    // -----------------------------------------------------------------------
+
+    [TestMethod]
+    public void WhenFileContainsNulBytesThenIsBinaryTrue()
+    {
+        var filePath = Path.Combine(_testDir, "data.unknown");
+        File.WriteAllBytes(filePath, [0x48, 0x65, 0x6C, 0x00, 0x6C, 0x6F]);
+
+        Assert.IsTrue(FileService.IsBinaryFile(filePath));
+    }
+
+    [TestMethod]
+    public void WhenFileContainsOnlyTextThenIsBinaryFalse()
+    {
+        var filePath = Path.Combine(_testDir, "plain.unknown");
+        File.WriteAllText(filePath, "Just plain text content here.\nSecond line.");
+
+        Assert.IsFalse(FileService.IsBinaryFile(filePath));
+    }
+
+    [TestMethod]
+    public void WhenFileIsEmptyWithUnknownExtensionThenIsBinaryFalse()
+    {
+        var filePath = Path.Combine(_testDir, "empty.dat2");
+        File.WriteAllBytes(filePath, []);
+
+        Assert.IsFalse(FileService.IsBinaryFile(filePath));
+    }
+
+    [TestMethod]
+    public void WhenExtensionCheckIsCaseInsensitiveThenIsBinaryTrue()
+    {
+        var filePath = Path.Combine(_testDir, "app.EXE");
+        File.WriteAllText(filePath, "MZ");
+
+        Assert.IsTrue(FileService.IsBinaryFile(filePath));
+    }
+
+    [TestMethod]
+    public void WhenNullPathThenThrowsArgumentNullException()
+    {
+        Assert.ThrowsExactly<ArgumentNullException>(() => FileService.IsBinaryFile(null!));
+    }
 }

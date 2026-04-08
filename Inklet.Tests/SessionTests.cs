@@ -144,7 +144,7 @@ public class SessionTests
     }
 
     [TestMethod]
-    public void WhenOpenedFileUnchangedPersistedThenDataIsNotDirty()
+    public void WhenOpenedFileUnchangedPersistedThenDataIsNotDirtyAndContentOmitted()
     {
         const string diskContent = "original";
         var session = new TabSession
@@ -158,6 +158,8 @@ public class SessionTests
 
         Assert.AreEqual(@"C:\docs\notes.txt", data.FilePath);
         Assert.IsFalse(data.IsModified);
+        // Content is intentionally empty for unmodified file-backed tabs to reduce storage
+        Assert.AreEqual(string.Empty, data.Content);
     }
 
     [TestMethod]
@@ -282,11 +284,12 @@ public class SessionTests
 
     /// <summary>
     /// Mirrors the PersistedTabData projection in <c>PersistSession</c>.
+    /// Content is intentionally omitted for unmodified file-backed tabs.
     /// </summary>
     private static PersistedTabData BuildPersistedData(TabSession s) => new()
     {
         FilePath = s.FilePath,
-        Content = s.Content,
+        Content = (s.FilePath is not null && !s.IsModified) ? string.Empty : s.Content,
         IsModified = s.IsModified,
         CursorPosition = s.CursorPosition,
         EncodingCodePage = s.Document.Encoding.CodePage,

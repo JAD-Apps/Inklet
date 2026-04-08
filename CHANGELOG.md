@@ -7,8 +7,15 @@ All notable changes to Inklet are documented in this file.
 ## [1.0.2] - 2026-04-08
 
 ### Fixed
+- Session data lost on close — persisted tab JSON was stored in `ApplicationDataContainer` which has an 8 KB size limit; session data is now written to a file in `LocalFolder` so tabs of any size are preserved reliably
 - Session cursor position lost on background-tab close — `PersistSession` now calls `SaveCurrentTabState` first so the active tab's cursor position is always captured before serialisation, not only on app close or tab switch
 - Last-tab reset not persisted — closing the final tab now calls `PersistSession` immediately after clearing state, so a crash between reset and app close no longer restores stale content on next launch; cursor position is also explicitly zeroed
+
+### Added
+- Binary file warning — opening a known binary format (`.exe`, `.dll`, `.zip`, `.pdf`, images, archives, etc.) or a file containing NUL bytes now shows a confirmation dialog explaining the file will not display correctly
+
+### Changed
+- Unmodified file-backed tabs no longer store their full content in the session file; they are reloaded from disk on next launch, significantly reducing session file size
 
 ---
 

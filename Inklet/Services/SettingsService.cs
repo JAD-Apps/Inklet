@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Text.Json;
 using Inklet.Models;
 using Windows.Storage;
@@ -18,6 +19,10 @@ internal sealed class SettingsService
         try
         {
             _settings = ApplicationData.Current.LocalSettings;
+
+            // Migration: remove the old SessionTabs key stored in ApplicationDataContainer
+            // (limited to 8 KB) — session data is now stored in a JSON file.
+            _settings.Values.Remove("SessionTabs");
         }
         catch (InvalidOperationException)
         {
@@ -150,15 +155,17 @@ internal sealed class SettingsService
 
     /// <summary>
     /// Full per-tab state persisted at session close, including unsaved content.
+    /// Stored as a JSON file in LocalFolder to avoid the 8 KB ApplicationDataContainer limit.
     /// </summary>
     internal IReadOnlyList<PersistedTabData> SessionTabs
     {
         get
         {
-            var json = GetValue<string>(nameof(SessionTabs), null!);
-            if (string.IsNullOrEmpty(json)) return [];
             try
             {
+                var path = GetSessionFilePath();
+                if (path is null || !File.Exists(path)) return [];
+                var json = File.ReadAllText(path);
                 return JsonSerializer.Deserialize<PersistedTabData[]>(json) ?? [];
             }
             catch { return []; }
@@ -167,10 +174,32 @@ internal sealed class SettingsService
         {
             try
             {
-                SetValue(nameof(SessionTabs), JsonSerializer.Serialize(value));
+                var path = GetSessionFilePath();
+                if (path is null) return;
+                var json = JsonSerializer.Serialize(value, s_jsonOptions);
+                File.WriteAllText(path, json);
             }
             catch { }
         }
+    }
+
+    private static readonly JsonSerializerOptions s_jsonOptions = new()
+    {
+        WriteIndented = false,
+    };
+
+    /// <summary>
+    /// Returns the full path to the session file in LocalFolder, or null outside a packaged context.
+    /// </summary>
+    private string? GetSessionFilePath()
+    {
+        if (_settings is null) return null;
+        try
+        {
+            var folder = ApplicationData.Current.LocalFolder.Path;
+            return Path.Combine(folder, "session.json");
+        }
+        catch { return null; }
     }
 
     private T GetValue<T>(string key, T defaultValue)
