@@ -4,6 +4,13 @@ All notable changes to Inklet are documented in this file.
 
 ---
 
+## [1.0.1] - 2026-04-07
+
+### Fixed
+- App failed to launch from the Microsoft Store — the IL trimmer stripped `ComInterfaceEntry` from `System.Runtime.InteropServices`, which CsWinRT requires at runtime for WinRT vtable registration; `PublishTrimmed` is now disabled
+
+---
+
 ## [1.0.0] - 2026-04-07
 
 ### Fixed
