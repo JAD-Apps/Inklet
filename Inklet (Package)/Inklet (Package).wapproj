@@ -151,6 +151,12 @@
     <PackageReference Include="Microsoft.WindowsAppSDK.DWrite" Version="1.8.25122902" />
     <PackageReference Include="Microsoft.WindowsAppSDK.Widgets" Version="1.8.251231004" />
     <PackageReference Include="Microsoft.WindowsAppSDK.Runtime" Version="1.8.260317003" />
+    <!-- Required so the build targets inject a PackageDependency on the Windows App SDK
+         framework package into the manifest. Without this, the runtime is not installed
+         alongside the MSIX and Application.Start throws REGDB_E_CLASSNOTREG. -->
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260317003">
+      <IncludeAssets>build</IncludeAssets>
+    </PackageReference>
   </ItemGroup>
   <Import Project="$(WapProjPath)\Microsoft.DesktopBridge.targets" />
 </Project>
