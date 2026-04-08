@@ -84,9 +84,15 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "Inklet.png");
-            if (File.Exists(iconPath))
-                AppWindow.SetIcon(iconPath);
+            var icoPath = Path.Combine(AppContext.BaseDirectory, "Assets", "Inklet.ico");
+            if (File.Exists(icoPath))
+            {
+                AppWindow.SetIcon(icoPath);
+                return;
+            }
+            var pngPath = Path.Combine(AppContext.BaseDirectory, "Assets", "Inklet.png");
+            if (File.Exists(pngPath))
+                AppWindow.SetIcon(pngPath);
         }
         catch { }
     }
@@ -1365,7 +1371,7 @@ public sealed partial class MainWindow : Window
         });
         panel.Children.Add(new TextBlock
         {
-            Text = "\u00a9 2025 JAD Apps. All rights reserved.",
+            Text = $"\u00a9 {DateTime.Now.Year} JAD Apps. All rights reserved.",
             FontSize = 12,
             Foreground = new SolidColorBrush(Colors.Gray)
         });
