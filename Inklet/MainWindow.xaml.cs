@@ -155,8 +155,11 @@ public sealed partial class MainWindow : Window
 
         if (tabs.Count > 0)
         {
-            // Restore persisted window size
-            ResizeWindow((int)_settings.WindowWidth, (int)_settings.WindowHeight);
+            // Restore persisted window state
+            if (_settings.WindowMaximized && AppWindow.Presenter is OverlappedPresenter overlapped)
+                overlapped.Maximize();
+            else
+                ResizeWindow((int)_settings.WindowWidth, (int)_settings.WindowHeight);
 
             foreach (var data in tabs)
             {
@@ -1475,8 +1478,16 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            _settings.WindowWidth = AppWindow.Size.Width;
-            _settings.WindowHeight = AppWindow.Size.Height;
+            var isMaximized = AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Maximized };
+            _settings.WindowMaximized = isMaximized;
+            // Only overwrite the restored size when not maximized — the maximized
+            // dimensions equal the screen resolution and must not be used as a
+            // restored size on next launch.
+            if (!isMaximized)
+            {
+                _settings.WindowWidth = AppWindow.Size.Width;
+                _settings.WindowHeight = AppWindow.Size.Height;
+            }
         }
         catch { }
     }

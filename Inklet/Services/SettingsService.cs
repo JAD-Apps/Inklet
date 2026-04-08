@@ -94,6 +94,13 @@ internal sealed class SettingsService
         set => SetValue(nameof(WindowHeight), value);
     }
 
+    /// <summary>Window was maximized when last closed.</summary>
+    internal bool WindowMaximized
+    {
+        get => GetValue(nameof(WindowMaximized), false);
+        set => SetValue(nameof(WindowMaximized), value);
+    }
+
     /// <summary>Active tab index from the last session.</summary>
     internal int LastActiveTabIndex
     {
