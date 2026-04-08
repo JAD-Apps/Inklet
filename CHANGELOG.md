@@ -4,6 +4,14 @@ All notable changes to Inklet are documented in this file.
 
 ---
 
+## [1.0.2] - 2026-04-08
+
+### Fixed
+- Session cursor position lost on background-tab close — `PersistSession` now calls `SaveCurrentTabState` first so the active tab's cursor position is always captured before serialisation, not only on app close or tab switch
+- Last-tab reset not persisted — closing the final tab now calls `PersistSession` immediately after clearing state, so a crash between reset and app close no longer restores stale content on next launch; cursor position is also explicitly zeroed
+
+---
+
 ## [1.0.1] - 2026-04-07
 
 ### Fixed
