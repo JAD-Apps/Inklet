@@ -10,7 +10,7 @@
   <Identity
     Name="JADApps.Inklet"
     Publisher="CN=2B43AD1A-273D-402E-A9A5-FF23C52C75B9"
-    Version="1.0.2.0" />
+    Version="1.0.3.0" />
 
   <mp:PhoneIdentity PhoneProductId="ae7e3603-d765-4654-9902-853db767bcc5" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 

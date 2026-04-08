@@ -4,6 +4,13 @@ All notable changes to Inklet are documented in this file.
 
 ---
 
+## [1.0.3] - 2026-04-08
+
+### Fixed
+- App still crashed on launch from Store/sideload — `PublishTrimmed` was disabled in the `.csproj` but the three `.pubxml` publish profiles used by the packaging project did not set it, allowing the SDK to re-enable IL trimming for self-contained builds; `PublishTrimmed=False` is now set in all publish profiles
+
+---
+
 ## [1.0.2] - 2026-04-08
 
 ### Fixed
