@@ -4,6 +4,14 @@ All notable changes to Inklet are documented in this file.
 
 ---
 
+## [1.0.5] - 2026-04-08
+
+### Fixed
+- App icon was missing from the taskbar — `AppWindow.SetIcon` was called with a `.png` file which Windows does not use for taskbar rendering; a multi-resolution `.ico` (256/48/32/16 px) is now generated from the source artwork and preferred by `SetWindowIcon()`
+- About dialog showed hardcoded year `2025` for copyright — now uses `DateTime.Now.Year` so it always reflects the current year
+
+---
+
 ## [1.0.4] - 2026-04-08
 
 ### Fixed
