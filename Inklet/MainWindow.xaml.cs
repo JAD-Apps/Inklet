@@ -327,6 +327,10 @@ public sealed partial class MainWindow : Window
 
     private void PersistSession()
     {
+        // Always flush the active tab's cursor position before writing — Editor_TextChanged
+        // keeps session.Content live, but CursorPosition is only synced on tab-switch.
+        SaveCurrentTabState();
+
         var tabData = TabStrip.TabItems
             .OfType<TabViewItem>()
             .Select(tvi => tvi.Tag is TabSession s ? new PersistedTabData
@@ -388,10 +392,12 @@ public sealed partial class MainWindow : Window
             session.Content = string.Empty;
             session.SavedContent = string.Empty;
             session.FilePath = null;
+            session.CursorPosition = 0;
             session.Document = new DocumentState();
             RefreshTabHeader(session);
             UpdateTitle(session);
             UpdateStatusBar(session);
+            PersistSession();
             Editor.Focus(FocusState.Programmatic);
         }
         else
