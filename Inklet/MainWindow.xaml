@@ -276,26 +276,49 @@
 
         <!-- Editor + Find bar -->
         <Grid Grid.Row="1">
-            <TextBox x:Name="Editor"
-                     AcceptsReturn="True"
-                     TextWrapping="NoWrap"
-                     IsSpellCheckEnabled="False"
-                     FontFamily="Consolas"
-                     FontSize="14"
-                     Padding="12,10"
-                     BorderThickness="0"
-                     Background="Transparent"
-                     VerticalAlignment="Stretch"
-                     HorizontalAlignment="Stretch"
-                     ScrollViewer.VerticalScrollBarVisibility="Auto"
-                     ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                     TextChanged="Editor_TextChanged"
-                     SelectionChanged="Editor_SelectionChanged"
-                     PointerWheelChanged="Editor_PointerWheelChanged"
-                     AllowDrop="True"
-                     DragOver="Editor_DragOver"
-                     Drop="Editor_Drop"
-                     AutomationProperties.AutomationId="EditorTextBox" />
+            <!--
+                RichEditBox (rather than TextBox) because WinUI 3's TextBox silently
+                truncates content at ~524288 characters. RichEditBox routes through
+                RichEdit and handles MB-scale documents. We treat it as a plain-text
+                surface — see Inklet/Editor/RichEditExtensions.cs for the API adapter.
+            -->
+            <RichEditBox x:Name="Editor"
+                         AcceptsReturn="True"
+                         TextWrapping="NoWrap"
+                         IsSpellCheckEnabled="False"
+                         IsTextPredictionEnabled="False"
+                         FontFamily="Consolas"
+                         FontSize="14"
+                         Padding="12,10"
+                         BorderThickness="0"
+                         Background="Transparent"
+                         VerticalAlignment="Stretch"
+                         HorizontalAlignment="Stretch"
+                         ScrollViewer.VerticalScrollBarVisibility="Auto"
+                         ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                         TextChanged="Editor_TextChanged"
+                         SelectionChanged="Editor_SelectionChanged"
+                         PointerWheelChanged="Editor_PointerWheelChanged"
+                         AllowDrop="True"
+                         DragOver="Editor_DragOver"
+                         Drop="Editor_Drop"
+                         AutomationProperties.AutomationId="EditorTextBox">
+                <!--
+                    Override the default themed brushes so hover/focus/disabled
+                    states stay transparent — the editor sits over the Mica backdrop
+                    and any hover fill or border looks like a stray rectangle.
+                -->
+                <RichEditBox.Resources>
+                    <SolidColorBrush x:Key="TextControlBackground" Color="Transparent" />
+                    <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="Transparent" />
+                    <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="Transparent" />
+                    <SolidColorBrush x:Key="TextControlBackgroundDisabled" Color="Transparent" />
+                    <SolidColorBrush x:Key="TextControlBorderBrush" Color="Transparent" />
+                    <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="Transparent" />
+                    <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="Transparent" />
+                    <SolidColorBrush x:Key="TextControlBorderBrushDisabled" Color="Transparent" />
+                </RichEditBox.Resources>
+            </RichEditBox>
 
             <!-- Find & Replace overlay -->
             <Border x:Name="FindReplaceBar" VerticalAlignment="Top" HorizontalAlignment="Right"
