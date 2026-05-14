@@ -66,6 +66,7 @@ public sealed class TabSession
             if (ReferenceEquals(_content, value)) return;
             _content = value;
             _isDirty = !ReferenceEquals(_content, _savedContent);
+            Lines.Invalidate(_content);
         }
     }
 
@@ -89,6 +90,12 @@ public sealed class TabSession
 
     /// <summary>Document metadata (encoding, line ending, etc.).</summary>
     public DocumentState Document { get; set; } = new();
+
+    /// <summary>
+    /// Per-tab cached line-start index for the editor's current text. Owned by the
+    /// tab so that switching away and back doesn't re-scan the whole document.
+    /// </summary>
+    internal LineIndex Lines { get; } = new();
 
     /// <summary>
     /// Whether the tab has unsaved changes. O(1) — see <see cref="Content"/>.

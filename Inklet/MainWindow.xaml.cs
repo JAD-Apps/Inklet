@@ -963,7 +963,7 @@ public sealed partial class MainWindow : Window
 
     private async void MenuGoTo_Click(object _, RoutedEventArgs _e)
     {
-        var lineCount = CountLines(Editor.Text);
+        var lineCount = ActiveSession?.Lines.LineCount ?? 1;
         var input = new TextBox { PlaceholderText = $"Line number (1-{lineCount})" };
         var dialog = new ContentDialog
         {
@@ -1060,18 +1060,9 @@ public sealed partial class MainWindow : Window
 
     private void GoToLine(int lineNumber)
     {
-        var text = Editor.Text;
-        int line = 1, pos = 0;
-        for (int i = 0; i < text.Length && line < lineNumber; i++)
-        {
-            if (text[i] == '\r')
-            {
-                line++; if (i + 1 < text.Length && text[i + 1] == '\n') i++;
-                pos = i + 1;
-            }
-            else if (text[i] == '\n') { line++; pos = i + 1; }
-        }
-        Editor.SelectionStart = lineNumber == 1 ? 0 : pos;
+        if (ActiveSession is not { } session) return;
+
+        Editor.SelectionStart = session.Lines.GetOffset(lineNumber);
         Editor.SelectionLength = 0;
         Editor.Focus(FocusState.Programmatic);
     }
@@ -1512,15 +1503,16 @@ public sealed partial class MainWindow : Window
 
     private void UpdateCursorPosition()
     {
-        var text = Editor.Text;
-        var pos = Editor.SelectionStart;
-        int line = 1, col = 1;
-        for (int i = 0; i < pos && i < text.Length; i++)
+        if (ActiveSession is not { } session)
         {
-            if (text[i] == '\r') { line++; col = 1; if (i + 1 < text.Length && text[i + 1] == '\n') i++; }
-            else if (text[i] == '\n') { line++; col = 1; }
-            else col++;
+            StatusBarPosition.Text = "Ln 1, Col 1";
+            return;
         }
+
+        // The line index is rebuilt only when the buffer changes, so this is O(log lines)
+        // per cursor movement instead of O(N) over the entire buffer (the previous
+        // implementation walked from offset 0 on every selection change).
+        var (line, col) = session.Lines.GetLineColumn(Editor.SelectionStart);
         StatusBarPosition.Text = $"Ln {line}, Col {col}";
     }
 
@@ -1616,18 +1608,6 @@ public sealed partial class MainWindow : Window
     private void InitializeWithWindow(object picker)
     {
         WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
-    }
-
-    private static int CountLines(string text)
-    {
-        if (string.IsNullOrEmpty(text)) return 1;
-        int lines = 1;
-        for (int i = 0; i < text.Length; i++)
-        {
-            if (text[i] == '\r') { lines++; if (i + 1 < text.Length && text[i + 1] == '\n') i++; }
-            else if (text[i] == '\n') lines++;
-        }
-        return lines;
     }
 
     // PostMessage / GetFocus — used by MenuRedo_Click to send Ctrl+Y to the focused
