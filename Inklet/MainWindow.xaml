@@ -291,7 +291,7 @@
                          FontSize="14"
                          Padding="12,10"
                          BorderThickness="0"
-                         Background="Transparent"
+                         Foreground="{ThemeResource TextFillColorPrimaryBrush}"
                          VerticalAlignment="Stretch"
                          HorizontalAlignment="Stretch"
                          ScrollViewer.VerticalScrollBarVisibility="Auto"
