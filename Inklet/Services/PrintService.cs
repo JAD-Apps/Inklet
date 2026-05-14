@@ -415,6 +415,21 @@ internal sealed class PrintService
         var fmt         = StringFormat.GenericTypographic;
         var sourceLines = text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
 
+        // Per-word width memoiser. A typical document repeats a small vocabulary many
+        // times (think "the", "and", whitespace, common identifiers in code) — caching
+        // the GDI+ measure across the whole job collapses thousands of MeasureString
+        // calls into a few hundred, dominating the print-time speedup.
+        var wordWidths = new Dictionary<string, float>(StringComparer.Ordinal);
+        float spaceWidth = MeasureWord(" ");
+
+        float MeasureWord(string w)
+        {
+            if (wordWidths.TryGetValue(w, out var cached)) return cached;
+            float width = g.MeasureString(w, font, int.MaxValue, fmt).Width;
+            wordWidths[w] = width;
+            return width;
+        }
+
         foreach (var source in sourceLines)
         {
             if (source.Length == 0) { result.Add(string.Empty); continue; }
@@ -425,19 +440,20 @@ internal sealed class PrintService
 
             foreach (var word in words)
             {
-                string probe      = current.Length == 0 ? word : " " + word;
-                float  probeWidth = g.MeasureString(probe, font, int.MaxValue, fmt).Width;
+                float wordWidth  = MeasureWord(word);
+                float probeWidth = current.Length == 0 ? wordWidth : spaceWidth + wordWidth;
 
                 if (currentWidth + probeWidth > maxWidth && current.Length > 0)
                 {
                     result.Add(current.ToString());
                     current.Clear();
                     current.Append(word);
-                    currentWidth = g.MeasureString(word, font, int.MaxValue, fmt).Width;
+                    currentWidth = wordWidth;
                 }
                 else
                 {
-                    current.Append(probe);
+                    if (current.Length > 0) current.Append(' ');
+                    current.Append(word);
                     currentWidth += probeWidth;
                 }
             }
