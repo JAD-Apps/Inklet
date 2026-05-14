@@ -1653,34 +1653,132 @@ public sealed partial class MainWindow : Window
     /// fails — that path will at least show the truncated content rather than nothing.
     /// </para>
     /// </summary>
+    /// <summary>
+    /// Replaces the editor's content with <paramref name="text"/>. Tries three paths
+    /// in order, falling through if a path is unavailable on the current build:
+    ///
+    /// <list type="number">
+    ///   <item>
+    ///     <b>EM_SETTEXTEX direct to RichEdit HWND</b> — fastest, but only works if
+    ///     we successfully located the inner RichEdit window. Bypasses every WinUI
+    ///     layer.
+    ///   </item>
+    ///   <item>
+    ///     <b>Chunked <see cref="ITextSelection.TypeText"/></b> — appends 64 KB at
+    ///     a time at the end of the document. Each call is well under WinUI's
+    ///     one-shot SetText cap (~512 KB), so the cumulative result is the full
+    ///     document.
+    ///   </item>
+    ///   <item>
+    ///     <b>Single SetText</b> — if even chunked TypeText fails for any reason,
+    ///     fall through to <see cref="RichEditExtensions.SetPlainText"/> so the user
+    ///     at least sees something.
+    ///   </item>
+    /// </list>
+    ///
+    /// Writes a one-line diagnostic to <c>LocalState\editor-load.log</c> recording
+    /// which path was taken plus the input/output character counts — when text is
+    /// missing the user can share this file to confirm exactly where the cap struck.
+    /// </summary>
     private void LoadEditorTextLarge(string text)
     {
         text ??= string.Empty;
-
-        // Make sure the RichEdit byte cap is lifted before we shove a megabyte at it.
         LiftEditorTextLimit();
 
-        if (_richEditHwnd == IntPtr.Zero)
-        {
-            // No HWND available — fall back to the WinUI path. Will truncate at ~512 KB
-            // but at least renders something.
-            Editor.SetPlainText(text);
-            return;
-        }
-
-        var setTextEx = new SETTEXTEX { Flags = ST_DEFAULT, Codepage = CP_UNICODE };
-        IntPtr structPtr = Marshal.AllocHGlobal(Marshal.SizeOf<SETTEXTEX>());
-        IntPtr textPtr = Marshal.StringToHGlobalUni(text);
+        string method = "fallback";
+        int writtenChars = 0;
         try
         {
-            Marshal.StructureToPtr(setTextEx, structPtr, fDeleteOld: false);
-            SendMessage(_richEditHwnd, EM_SETTEXTEX, structPtr, textPtr);
+            if (_richEditHwnd != IntPtr.Zero)
+            {
+                method = "win32";
+                var setTextEx = new SETTEXTEX { Flags = ST_DEFAULT, Codepage = CP_UNICODE };
+                IntPtr structPtr = Marshal.AllocHGlobal(Marshal.SizeOf<SETTEXTEX>());
+                IntPtr textPtr = Marshal.StringToHGlobalUni(text);
+                try
+                {
+                    Marshal.StructureToPtr(setTextEx, structPtr, fDeleteOld: false);
+                    SendMessage(_richEditHwnd, EM_SETTEXTEX, structPtr, textPtr);
+                }
+                finally
+                {
+                    Marshal.FreeHGlobal(structPtr);
+                    Marshal.FreeHGlobal(textPtr);
+                }
+
+                // Verify by reading the length back. If less than the input, the win32
+                // path was capped — fall through to chunked TypeText.
+                writtenChars = ReadEditorCharCount();
+                if (writtenChars >= text.Length) { LogLoad(method, text.Length, writtenChars); return; }
+            }
+
+            // Chunked TypeText: clear, then append at the document end in 64 KB blocks.
+            method = "chunked";
+            Editor.Document.SetText(TextSetOptions.None, string.Empty);
+            if (text.Length > 0)
+            {
+                var sel = Editor.Document.Selection;
+                const int chunkSize = 64 * 1024;
+                int pos = 0;
+                while (pos < text.Length)
+                {
+                    int len = Math.Min(chunkSize, text.Length - pos);
+                    sel.SetRange(int.MaxValue, int.MaxValue); // move caret to end
+                    sel.TypeText(text.Substring(pos, len));
+                    pos += len;
+                }
+                sel.SetRange(0, 0); // park caret at start when done
+            }
+            writtenChars = ReadEditorCharCount();
+            if (writtenChars > 0 || text.Length == 0) { LogLoad(method, text.Length, writtenChars); return; }
+
+            // Final fallback if chunked TypeText produced nothing — at least show what fits.
+            method = "setplaintext";
+            Editor.SetPlainText(text);
+            writtenChars = ReadEditorCharCount();
+        }
+        catch (Exception ex)
+        {
+            method = $"error:{ex.GetType().Name}";
+            try { Editor.SetPlainText(text); writtenChars = ReadEditorCharCount(); } catch { }
         }
         finally
         {
-            Marshal.FreeHGlobal(structPtr);
-            Marshal.FreeHGlobal(textPtr);
+            LogLoad(method, text.Length, writtenChars);
         }
+    }
+
+    /// <summary>
+    /// Returns the editor's current character length. Uses the Win32 path when an
+    /// HWND is cached (more accurate for capped TextDocument), else
+    /// <see cref="ITextDocument.GetText"/>.
+    /// </summary>
+    private int ReadEditorCharCount()
+    {
+        if (_richEditHwnd != IntPtr.Zero)
+        {
+            var lengthEx = new GETTEXTLENGTHEX { Flags = GTL_DEFAULT | GTL_NUMCHARS, Codepage = CP_UNICODE };
+            IntPtr lenPtr = Marshal.AllocHGlobal(Marshal.SizeOf<GETTEXTLENGTHEX>());
+            try
+            {
+                Marshal.StructureToPtr(lengthEx, lenPtr, fDeleteOld: false);
+                return SendMessage(_richEditHwnd, EM_GETTEXTLENGTHEX, lenPtr, IntPtr.Zero).ToInt32();
+            }
+            finally { Marshal.FreeHGlobal(lenPtr); }
+        }
+        try { return Editor.GetPlainText().Length; } catch { return -1; }
+    }
+
+    private void LogLoad(string method, int requested, int actual)
+    {
+        try
+        {
+            var folder = Windows.Storage.ApplicationData.Current.LocalFolder.Path;
+            var path = System.IO.Path.Combine(folder, "editor-load.log");
+            var line = $"{DateTime.Now:HH:mm:ss.fff}  method={method,-12}  requested={requested,-10}  actual={actual,-10}  hwnd={_richEditHwnd}\r\n";
+            System.IO.File.AppendAllText(path, line);
+        }
+        catch { /* diagnostics are best-effort */ }
     }
 
     /// <summary>
