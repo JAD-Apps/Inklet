@@ -1,3 +1,5 @@
+using System;
+
 namespace Inklet.Models;
 
 /// <summary>
@@ -27,8 +29,15 @@ public static class LineEndingDetector
     /// Detects the predominant line ending style in the given text.
     /// </summary>
     public static LineEndingStyle Detect(string text)
+        => Detect(text.AsSpan());
+
+    /// <summary>
+    /// Span overload — avoids the substring allocation when the caller is sampling
+    /// only the first N characters of a large buffer.
+    /// </summary>
+    public static LineEndingStyle Detect(ReadOnlySpan<char> text)
     {
-        if (string.IsNullOrEmpty(text))
+        if (text.IsEmpty)
         {
             return LineEndingStyle.CrLf;
         }

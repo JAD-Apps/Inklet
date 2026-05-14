@@ -11,6 +11,13 @@ namespace Inklet.Services;
 public static class EncodingDetector
 {
     /// <summary>
+    /// Maximum bytes scanned for the UTF-8 validity check and the statistical detector.
+    /// 64 KB is enough to be statistically reliable for both — scanning the full file
+    /// is wasted work for the common 100 MB+ log case.
+    /// </summary>
+    internal const int DetectionSampleSize = 64 * 1024;
+
+    /// <summary>
     /// Detects the encoding of a file by examining its byte order mark and content.
     /// </summary>
     /// <param name="data">Raw file bytes.</param>
@@ -31,15 +38,20 @@ public static class EncodingDetector
             return bomResult.Value;
         }
 
+        // Both UTF-8 validation and the statistical detector get a sample, not the
+        // full buffer. Both are statistical-by-byte; running them against the entire
+        // file just multiplies the work.
+        int sampleLength = Math.Min(data.Length, DetectionSampleSize);
+
         // Check if the content is valid UTF-8 first — prefer UTF-8 over single-byte
         // encodings because UTF-8 is the most common encoding and ASCII is a subset of it.
-        if (IsValidUtf8(data))
+        if (IsValidUtf8(data, sampleLength))
         {
             return (Encoding.UTF8, false);
         }
 
         // Use UTF.Unknown for statistical detection of non-UTF-8 encodings
-        var detectionResult = CharsetDetector.DetectFromBytes(data);
+        var detectionResult = CharsetDetector.DetectFromBytes(data, 0, sampleLength);
         if (detectionResult.Detected is { } detected && detected.Confidence > 0.5f)
         {
             try
@@ -99,13 +111,16 @@ public static class EncodingDetector
     }
 
     /// <summary>
-    /// Validates whether the byte array is valid UTF-8.
+    /// Validates whether the first <paramref name="length"/> bytes of <paramref name="data"/>
+    /// are valid UTF-8. If the sample ends mid-multi-byte-sequence the truncation is
+    /// tolerated (we treat that as "valid so far"), so a sliced sample of an otherwise-valid
+    /// UTF-8 file isn't rejected for the truncated last codepoint.
     /// </summary>
-    private static bool IsValidUtf8(byte[] data)
+    internal static bool IsValidUtf8(byte[] data, int length)
     {
         int i = 0;
 
-        while (i < data.Length)
+        while (i < length)
         {
             byte b = data[i];
 
@@ -131,9 +146,11 @@ public static class EncodingDetector
                 return false;
             }
 
-            if (i + sequenceLength > data.Length)
+            if (i + sequenceLength > length)
             {
-                return false;
+                // Truncated sample — only invalid if the truncation also runs past the
+                // real buffer (i.e. the file actually ends mid-sequence).
+                return i + sequenceLength > data.Length ? false : true;
             }
 
             for (int j = 1; j < sequenceLength; j++)

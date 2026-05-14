@@ -123,6 +123,44 @@ public class EncodingDetectorTests
     }
 
     [TestMethod]
+    public void WhenLargeAsciiBufferThenDetectedAsUtf8WithoutFullScan()
+    {
+        // 1 MB of ASCII — should be detected as UTF-8 quickly via sample.
+        var data = new byte[1024 * 1024];
+        for (int i = 0; i < data.Length; i++) data[i] = (byte)('a' + (i % 26));
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var (encoding, hasBom) = EncodingDetector.Detect(data);
+        sw.Stop();
+
+        Assert.AreEqual(65001, encoding.CodePage);
+        Assert.IsFalse(hasBom);
+        // Sanity: detection should be fast — sample is 64 KB, full scan would take much longer.
+        Assert.IsTrue(sw.ElapsedMilliseconds < 200, $"Detection took {sw.ElapsedMilliseconds}ms");
+    }
+
+    [TestMethod]
+    public void WhenIsValidUtf8WithLengthThenScansOnlyRequestedRange()
+    {
+        // Bytes 0–4 are valid UTF-8, byte 5 is invalid. With length=5 we should see "valid".
+        byte[] data = [0x68, 0x65, 0x6C, 0x6C, 0x6F, 0xFF];
+
+        Assert.IsTrue(EncodingDetector.IsValidUtf8(data, 5));
+        Assert.IsFalse(EncodingDetector.IsValidUtf8(data, 6));
+    }
+
+    [TestMethod]
+    public void WhenIsValidUtf8SampleEndsMidSequenceButFullBufferContinuesThenAccepts()
+    {
+        // 0xC3 starts a 2-byte UTF-8 sequence. Sample length 1 truncates mid-sequence,
+        // but the full buffer continues with 0xA9 (a valid continuation byte) — so the
+        // truncation is benign and we should report valid.
+        byte[] data = [0xC3, 0xA9, 0x21]; // "é!"
+
+        Assert.IsTrue(EncodingDetector.IsValidUtf8(data, 1));
+    }
+
+    [TestMethod]
     public void WhenAnsiFallbackThenCodePageIsResolvedNotZero()
     {
         // Bytes that are not valid UTF-8 and not detected with high enough confidence

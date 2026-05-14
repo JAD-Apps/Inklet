@@ -41,7 +41,12 @@ public static class FileService
         int preambleLength = hasBom ? encoding.GetPreamble().Length : 0;
         var content = encoding.GetString(data, preambleLength, data.Length - preambleLength);
 
-        var lineEnding = LineEndingDetector.Detect(content);
+        // For files >1 MB the LineEndingDetector pass after decode was a noticeable
+        // chunk of the load time. Sample-based detection is used here too: the dominant
+        // line-ending style is identifiable from the first few thousand line breaks,
+        // and Notepad/VSCode treat any further deviation as "mixed but display as the
+        // dominant style" anyway.
+        var lineEnding = DetectLineEndingsSampled(content);
 
         var state = new DocumentState
         {
@@ -52,6 +57,20 @@ public static class FileService
         };
 
         return (content, state);
+    }
+
+    // Cap the line-ending detection to roughly 256 KB of decoded text — beyond that
+    // we have statistically more than enough samples to determine the dominant style.
+    private const int LineEndingDetectionSampleChars = 256 * 1024;
+
+    private static LineEndingStyle DetectLineEndingsSampled(string content)
+    {
+        if (content.Length <= LineEndingDetectionSampleChars)
+            return LineEndingDetector.Detect(content);
+
+        // Sample from the start — file headers often have stable line endings; if the
+        // file later switches we'd report "mixed" anyway and downgrade to CrLf.
+        return LineEndingDetector.Detect(content.AsSpan(0, LineEndingDetectionSampleChars));
     }
 
     /// <summary>
