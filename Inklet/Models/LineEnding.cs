@@ -96,12 +96,15 @@ public static class LineEndingDetector
 
     /// <summary>
     /// Normalizes all line endings in text to the specified style.
+    /// Returns <see cref="string.Empty"/> for null or empty input — the previous
+    /// behaviour of returning null on null input violated the non-nullable return
+    /// contract and caused crashes in callers that didn't expect it.
     /// </summary>
     public static string Normalize(string text, LineEndingStyle targetStyle)
     {
         if (string.IsNullOrEmpty(text))
         {
-            return text;
+            return string.Empty;
         }
 
         // First normalize everything to \n, then convert to target

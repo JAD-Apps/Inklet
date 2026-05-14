@@ -164,11 +164,13 @@ public class LineEndingTests
     }
 
     [TestMethod]
-    public void WhenNormalizeNullStringThenReturnsNull()
+    public void WhenNormalizeNullStringThenReturnsEmpty()
     {
+        // The method's signature returns a non-nullable string; null input must not
+        // propagate as a null return (would NRE downstream callers like FileService.WriteFileAsync).
         var result = LineEndingDetector.Normalize(null!, LineEndingStyle.Lf);
 
-        Assert.IsNull(result);
+        Assert.AreEqual(string.Empty, result);
     }
 
     [TestMethod]
