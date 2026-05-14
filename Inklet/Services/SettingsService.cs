@@ -305,15 +305,32 @@ internal sealed class SettingsService
         catch { return null; }
     }
 
+    // In-memory read cache for the ApplicationDataContainer values. Reads check the
+    // cache first; misses fall back to the underlying container and populate the cache.
+    // Writes update both the cache and the container so a process restart sees the
+    // latest values immediately. Avoids per-property COM round-trips on RestoreSettings,
+    // MenuPageSetup, and the dozen other places that batch property reads.
+    private readonly Dictionary<string, object?> _readCache = new(StringComparer.Ordinal);
+
     private T GetValue<T>(string key, T defaultValue)
     {
         if (_settings is null) return defaultValue;
 
+        if (_readCache.TryGetValue(key, out var cached))
+            return cached is T typedCached ? typedCached : defaultValue;
+
         try
         {
-            if (_settings.Values.TryGetValue(key, out var value) && value is T typed)
+            if (_settings.Values.TryGetValue(key, out var value))
             {
-                return typed;
+                _readCache[key] = value;
+                if (value is T typed) return typed;
+            }
+            else
+            {
+                // Cache the absence so we don't re-query a missing key — defaults are
+                // returned without a COM round-trip thereafter.
+                _readCache[key] = null;
             }
         }
         catch
@@ -331,6 +348,7 @@ internal sealed class SettingsService
         try
         {
             _settings.Values[key] = value;
+            _readCache[key] = value;
         }
         catch
         {
