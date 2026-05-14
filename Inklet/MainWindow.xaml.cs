@@ -52,6 +52,11 @@ public sealed partial class MainWindow : Window
     private DispatcherTimer? _tabScrollTimer;
     private int _tabScrollDirection;
 
+    // Cached on first lookup. The TabView's internal ScrollViewer doesn't change for
+    // the life of the window, so walking the visual tree on every scroll event was
+    // wasted work (especially for TabScrollTimer_RepeatTick at 50 ms cadence).
+    private ScrollViewer? _cachedTabsScrollViewer;
+
     // ---------------------------------------------------------------
     // Tab management
     // ---------------------------------------------------------------
@@ -510,8 +515,11 @@ public sealed partial class MainWindow : Window
 
     private ScrollViewer? FindTabScrollViewer()
     {
-        // Walk the TabView's visual tree to find its internal ScrollViewer.
-        return FindDescendant<ScrollViewer>(TabStrip);
+        // Cached after the first successful lookup. The TabView template doesn't get
+        // re-applied during the window's lifetime, so the ScrollViewer reference is
+        // stable. Tab-scroll repeat fires at 50 ms cadence and previously walked the
+        // entire visual tree on every tick.
+        return _cachedTabsScrollViewer ??= FindDescendant<ScrollViewer>(TabStrip);
     }
 
     private static T? FindDescendant<T>(DependencyObject parent) where T : DependencyObject
