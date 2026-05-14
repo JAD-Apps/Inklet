@@ -42,11 +42,12 @@ public class FileChangeWatcherTests
         var fired = new ManualResetEventSlim(false);
         using var watcher = new FileChangeWatcher(_path, () => fired.Set());
 
-        watcher.SuppressNextChange();
+        // Use a short explicit window so the test stays fast; the default (5 s) would
+        // make the "expires later" test below take 6+ seconds.
+        watcher.SuppressNextChange(TimeSpan.FromMilliseconds(800));
         File.WriteAllText(_path, "self-write");
 
-        // Should NOT fire — the suppression is effective for ~1 s.
-        Assert.IsFalse(fired.Wait(TimeSpan.FromMilliseconds(750)),
+        Assert.IsFalse(fired.Wait(TimeSpan.FromMilliseconds(500)),
             "Callback must not fire while suppression window is active");
     }
 
@@ -56,13 +57,26 @@ public class FileChangeWatcherTests
         var fired = new ManualResetEventSlim(false);
         using var watcher = new FileChangeWatcher(_path, () => fired.Set());
 
-        watcher.SuppressNextChange();
-        // Wait for the suppression window (1 s) to lapse, then write.
-        Thread.Sleep(1100);
+        watcher.SuppressNextChange(TimeSpan.FromMilliseconds(300));
+        Thread.Sleep(500); // outlast the 300 ms window
         File.WriteAllText(_path, "after suppression");
 
         Assert.IsTrue(fired.Wait(TimeSpan.FromSeconds(5)),
             "Callback should fire after the suppression window expires");
+    }
+
+    [TestMethod]
+    public void WhenSuppressNextChangeWithNoArgThenUsesDefaultWindow()
+    {
+        var fired = new ManualResetEventSlim(false);
+        using var watcher = new FileChangeWatcher(_path, () => fired.Set());
+
+        watcher.SuppressNextChange();
+        File.WriteAllText(_path, "self-write");
+
+        // Default is 5s — at 1.5s we should still be inside the window.
+        Assert.IsFalse(fired.Wait(TimeSpan.FromMilliseconds(1500)),
+            "Default suppression window must outlast slow-disk echo (>1s)");
     }
 
     [TestMethod]

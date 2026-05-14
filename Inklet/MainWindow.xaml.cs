@@ -90,8 +90,10 @@ public sealed partial class MainWindow : Window
         SetupCustomTitleBar();
         RestoreSettings();
         AppWindow.Closing += AppWindow_Closing;
-        StartAutosaveTimer();
 
+        // Autosave timer is started at the END of InitialLoadAsync — starting it here
+        // would let an early tick race the tab-population loop and observe a half-built
+        // TabStrip.TabItems collection.
         _ = InitialLoadAsync();
     }
 
@@ -111,9 +113,12 @@ public sealed partial class MainWindow : Window
         try
         {
             // Only persist if at least one tab is dirty — autosaving an unchanged
-            // session every 30 s would needlessly thrash the disk.
+            // session every 30 s would needlessly thrash the disk. Snapshot the tab
+            // collection before iterating: PersistSessionAsync awaits, and a tab close
+            // on the UI thread during that await would invalidate a live enumeration.
+            var snapshot = TabStrip.TabItems.OfType<TabViewItem>().ToList();
             bool anyDirty = false;
-            foreach (var tvi in TabStrip.TabItems.OfType<TabViewItem>())
+            foreach (var tvi in snapshot)
             {
                 if (tvi.Tag is TabSession s && s.IsModified) { anyDirty = true; break; }
             }
@@ -292,6 +297,10 @@ public sealed partial class MainWindow : Window
 
             await LoadFileIntoSessionAsync(session, _initialFilePath);
         }
+
+        // Now that the tab population is complete, it's safe to start autosaving —
+        // any tick before this point could have iterated a half-built TabStrip.
+        StartAutosaveTimer();
     }
 
     private void ResizeWindow(int width, int height)
@@ -408,12 +417,14 @@ public sealed partial class MainWindow : Window
     /// Async counterpart to <see cref="PersistSession"/> used by the window-close path.
     /// The session JSON write happens on a thread-pool thread so the UI thread is not
     /// blocked when persisting many unsaved buffers.
+    /// Returns false if the write failed — the close handler uses this to prompt the
+    /// user before tearing down the window with potentially unsaved data.
     /// </summary>
-    private async Task PersistSessionAsync()
+    private async Task<bool> PersistSessionAsync()
     {
         var tabData = BuildSessionSnapshot();
         _settings.LastActiveTabIndex = TabStrip.SelectedIndex;
-        await _settings.SaveSessionTabsAsync(tabData).ConfigureAwait(false);
+        return await _settings.SaveSessionTabsAsync(tabData).ConfigureAwait(false);
     }
 
     private List<PersistedTabData> BuildSessionSnapshot()
@@ -957,13 +968,19 @@ public sealed partial class MainWindow : Window
         try
         {
             // Tell the watcher to ignore our own write — otherwise the user gets
-            // a "file changed externally" prompt every time they save.
+            // a "file changed externally" prompt every time they save. We arm
+            // suppression both before AND after the write: the FileSystemWatcher
+            // echo can arrive at either moment depending on the disk (slow disks
+            // flush after WriteAllTextAsync returns, antivirus scans the file
+            // moments later).
             session.Watcher?.SuppressNextChange();
 
             await FileService.WriteFileAsync(
                 session.FilePath, session.Content,
                 session.Document.Encoding, session.Document.HasBom,
                 session.Document.LineEnding);
+
+            session.Watcher?.SuppressNextChange();
 
             session.MarkSaved();
             RefreshTabHeader(session);
@@ -1696,23 +1713,56 @@ public sealed partial class MainWindow : Window
         // buffers can be silently dropped if the process exits before the write finishes.
         args.Cancel = true;
 
+        bool savedOk;
         try
         {
             SaveCurrentTabState();
             SaveWindowSize();
-            await PersistSessionAsync();
+            savedOk = await PersistSessionAsync();
         }
         catch
         {
-            // Even on save failure we must let the window close — a save failure should
-            // never trap the user inside the app. The .bak from the previous successful
-            // close (see SettingsService.WriteSessionFileAtomicAsync) is still on disk.
+            savedOk = false;
         }
-        finally
+
+        if (!savedOk && AnyTabIsModified())
         {
-            _allowClose = true;
-            Close();
+            // Save failed AND there's unsaved data — give the user a real choice rather
+            // than silently destroying their work. The XamlRoot is still alive at this
+            // point (we cancelled the close) so the dialog renders correctly.
+            try
+            {
+                var dialog = new ContentDialog
+                {
+                    Title = "Couldn't save your session",
+                    Content = "Inklet failed to write your unsaved tabs to disk (the disk may be full or the file is locked). " +
+                              "Closing now will lose those changes.",
+                    PrimaryButtonText = "Close anyway",
+                    CloseButtonText = "Stay open",
+                    DefaultButton = ContentDialogButton.Close,
+                    XamlRoot = Content.XamlRoot,
+                };
+                if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+                    return; // user chose Stay open — abort the close
+            }
+            catch
+            {
+                // If the dialog itself can't render (very rare), fall through to close
+                // — better to close than to deadlock the app.
+            }
         }
+
+        _allowClose = true;
+        Close();
+    }
+
+    private bool AnyTabIsModified()
+    {
+        foreach (var tvi in TabStrip.TabItems.OfType<TabViewItem>())
+        {
+            if (tvi.Tag is TabSession s && s.IsModified) return true;
+        }
+        return false;
     }
 
     private void SaveWindowSize()

@@ -57,14 +57,23 @@ internal sealed class FileChangeWatcher : IDisposable
     }
 
     /// <summary>
-    /// Marks the next ~1 second of events as "self-inflicted" — typically called
-    /// immediately before saving the file ourselves, so the resulting watcher
-    /// echo doesn't trigger an unwanted reload prompt.
+    /// Default suppression window. Generous on purpose: covers antivirus rescans,
+    /// OneDrive sync, network shares, slow USB sticks. The shorter window we shipped
+    /// initially (1 s) bit on slow disks where the FileSystemWatcher echo arrived
+    /// after the suppression had expired.
     /// </summary>
-    public void SuppressNextChange()
+    public static readonly TimeSpan DefaultSuppressionWindow = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// Marks the next <paramref name="window"/> of events as "self-inflicted" —
+    /// typically called both immediately before AND immediately after a self-write,
+    /// so the watcher echo (which can arrive at either moment, depending on the disk)
+    /// doesn't trigger an unwanted reload prompt.
+    /// </summary>
+    public void SuppressNextChange(TimeSpan? window = null)
     {
-        // 1 second is generous: covers slow disks, antivirus scans, OneDrive sync, etc.
-        var until = DateTime.UtcNow.AddSeconds(1).Ticks;
+        var actualWindow = window ?? DefaultSuppressionWindow;
+        var until = DateTime.UtcNow.Add(actualWindow).Ticks;
         Interlocked.Exchange(ref _suppressUntilTicks, until);
     }
 
