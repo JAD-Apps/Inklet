@@ -10,6 +10,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing.Printing;
 using System.IO;
 using System.Linq;
@@ -32,7 +33,10 @@ namespace Inklet;
 public sealed partial class MainWindow : Window
 {
     private static readonly string[] s_textFileTypes = [".txt"];
-    private static readonly string[] s_allFileTypes = ["."];
+
+    // FileSavePicker accepts "*" as the documented "All Files" wildcard. The previous
+    // value "." was non-standard and worked only on some Windows builds.
+    private static readonly string[] s_allFileTypes = ["*"];
 
     // Common monospaced fonts shown in the font picker drop-down.
     private static readonly string[] s_monoFonts =
@@ -143,7 +147,7 @@ public sealed partial class MainWindow : Window
             if (File.Exists(pngPath))
                 AppWindow.SetIcon(pngPath);
         }
-        catch { }
+        catch (Exception ex) { Debug.WriteLine($"SetWindowIcon failed: {ex.Message}"); }
     }
 
     private void SetupCustomTitleBar()
@@ -293,7 +297,7 @@ public sealed partial class MainWindow : Window
     private void ResizeWindow(int width, int height)
     {
         try { AppWindow.Resize(new SizeInt32(width, height)); }
-        catch { }
+        catch (Exception ex) { Debug.WriteLine($"ResizeWindow({width},{height}) failed: {ex.Message}"); }
     }
 
     private static DocumentState BuildDocumentState(PersistedTabData data)
@@ -451,7 +455,7 @@ public sealed partial class MainWindow : Window
 
         // Sync the editor text into the session before checking IsModified,
         // so the dirty flag is accurate for the tab being closed.
-        if (TabStrip.SelectedItem == tab)
+        if (ReferenceEquals(TabStrip.SelectedItem, tab))
             SaveCurrentTabState();
 
         if (session.IsModified)
@@ -1501,7 +1505,16 @@ public sealed partial class MainWindow : Window
     {
         var assembly = Assembly.GetExecutingAssembly();
         var version = assembly.GetName().Version ?? new Version(1, 0, 0);
-        var buildDate = File.GetLastWriteTime(assembly.Location);
+        // assembly.Location is empty for single-file bundles — fall back to "now" so
+        // the About dialog still renders something sensible.
+        DateTime buildDate;
+        try
+        {
+            buildDate = !string.IsNullOrEmpty(assembly.Location)
+                ? File.GetLastWriteTime(assembly.Location)
+                : DateTime.Now;
+        }
+        catch { buildDate = DateTime.Now; }
 
         var panel = new StackPanel { Spacing = 12 };
         var header = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 16 };
@@ -1518,7 +1531,7 @@ public sealed partial class MainWindow : Window
                 });
             }
         }
-        catch { }
+        catch (Exception ex) { Debug.WriteLine($"About icon load failed: {ex.Message}"); }
 
         var titleStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         titleStack.Children.Add(new TextBlock { Text = "Inklet", FontSize = 20, FontWeight = FontWeights.Bold });
@@ -1609,7 +1622,10 @@ public sealed partial class MainWindow : Window
     private void Editor_DragOver(object _, DragEventArgs e)
     {
         if (e.DataView.Contains(StandardDataFormats.StorageItems))
+        {
             e.AcceptedOperation = DataPackageOperation.Copy;
+            e.Handled = true;
+        }
     }
 
     private async void Editor_Drop(object _, DragEventArgs e)
@@ -1714,7 +1730,7 @@ public sealed partial class MainWindow : Window
                 _settings.WindowHeight = AppWindow.Size.Height;
             }
         }
-        catch { }
+        catch (Exception ex) { Debug.WriteLine($"SaveWindowSize failed: {ex.Message}"); }
     }
 
     #endregion

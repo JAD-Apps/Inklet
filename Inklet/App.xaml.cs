@@ -24,16 +24,31 @@ public partial class App : Application
     /// </summary>
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
-        // Check for command-line file argument
-        string? filePath = null;
-        var cmdArgs = Environment.GetCommandLineArgs();
-        if (cmdArgs.Length > 1)
-        {
-            // First arg is the exe path, subsequent args are user arguments
-            filePath = cmdArgs.Skip(1).FirstOrDefault(a => !a.StartsWith('-'));
-        }
-
-        _window = new MainWindow(filePath);
+        _window = new MainWindow(ResolveCommandLineFile());
         _window.Activate();
+    }
+
+    /// <summary>
+    /// Returns the canonical absolute path of the first non-flag command-line argument
+    /// that points to an existing file, or null if there isn't one. Defensive against
+    /// relative paths, missing files, and Path.GetFullPath throwing on malformed input.
+    /// </summary>
+    private static string? ResolveCommandLineFile()
+    {
+        var cmdArgs = Environment.GetCommandLineArgs();
+        if (cmdArgs.Length <= 1) return null;
+
+        var raw = cmdArgs.Skip(1).FirstOrDefault(a => !a.StartsWith('-'));
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+
+        try
+        {
+            var full = System.IO.Path.GetFullPath(raw);
+            return System.IO.File.Exists(full) ? full : null;
+        }
+        catch
+        {
+            return null;
+        }
     }
 }

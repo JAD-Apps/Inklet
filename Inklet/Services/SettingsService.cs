@@ -53,10 +53,10 @@ internal sealed class SettingsService
         set => SetValue(nameof(FontFamily), value);
     }
 
-    /// <summary>Font size in points.</summary>
+    /// <summary>Font size in points. Default 14 matches MainWindow.xaml's TextBox FontSize.</summary>
     internal double FontSize
     {
-        get => GetValue(nameof(FontSize), 12.0);
+        get => GetValue(nameof(FontSize), 14.0);
         set => SetValue(nameof(FontSize), value);
     }
 
