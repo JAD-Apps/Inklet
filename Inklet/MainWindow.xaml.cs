@@ -1586,6 +1586,60 @@ public sealed partial class MainWindow : Window
 
     #region Editor Events
 
+    /// <summary>
+    /// Once the RichEditBox has been laid out and its inner RichEdit HWND has been
+    /// created, send EM_EXLIMITTEXT to remove the default ~512 KB text cap. Without
+    /// this, opening any file larger than half a megabyte renders only the leading
+    /// portion silently — see PR #44.
+    /// </summary>
+    private void Editor_Loaded(object _, RoutedEventArgs _e)
+    {
+        try
+        {
+            var richEditHwnd = FindRichEditHwnd();
+            if (richEditHwnd == IntPtr.Zero) return;
+
+            // EM_EXLIMITTEXT with int.MaxValue lifts the cap to the maximum the control
+            // supports (~2 GB for plain text in modern RichEdit). The setting persists
+            // for the control's lifetime, so once-per-load is enough.
+            const uint EM_EXLIMITTEXT = 0x0435;
+            SendMessage(richEditHwnd, EM_EXLIMITTEXT, IntPtr.Zero, (IntPtr)int.MaxValue);
+        }
+        catch (Exception ex) { Debug.WriteLine($"Editor_Loaded EM_EXLIMITTEXT failed: {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// Walks the main window's child window tree looking for the RichEdit control
+    /// hosted inside the WinUI 3 RichEditBox. Returns IntPtr.Zero if not found.
+    /// </summary>
+    private IntPtr FindRichEditHwnd()
+    {
+        var mainHwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        IntPtr found = IntPtr.Zero;
+
+        bool Callback(IntPtr h, IntPtr _l)
+        {
+            var buf = new char[256];
+            int len = GetClassName(h, buf, buf.Length);
+            if (len > 0)
+            {
+                var cls = new string(buf, 0, len);
+                // Modern RichEdit class is RICHEDIT50W; older variants RICHEDIT20W/A.
+                if (cls.StartsWith("RICHEDIT", StringComparison.OrdinalIgnoreCase))
+                {
+                    found = h;
+                    return false; // stop enumeration
+                }
+            }
+            return true;
+        }
+
+        // EnumChildWindows recurses through descendants implicitly; the RichEdit is
+        // several layers deep inside the XAML island host hierarchy.
+        EnumChildWindows(mainHwnd, Callback, IntPtr.Zero);
+        return found;
+    }
+
     private void Editor_TextChanged(object _, RoutedEventArgs _e)
     {
         if (_suppressTextChanged) return;
@@ -1813,6 +1867,21 @@ public sealed partial class MainWindow : Window
     {
         WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
     }
+
+    // P/Invokes used by Editor_Loaded / FindRichEditHwnd to remove the RichEdit
+    // default text-length cap. Cannot use LibraryImport because EnumChildWindows
+    // takes a delegate (not blittable in the source-generator sense).
+    private delegate bool EnumChildProc(IntPtr hWnd, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool EnumChildWindows(IntPtr hwndParent, EnumChildProc lpEnumFunc, IntPtr lParam);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetClassNameW")]
+    private static extern int GetClassName(IntPtr hWnd, [Out] char[] lpClassName, int nMaxCount);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "SendMessageW")]
+    private static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
 
     #endregion
 }

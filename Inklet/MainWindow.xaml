@@ -296,6 +296,7 @@
                          HorizontalAlignment="Stretch"
                          ScrollViewer.VerticalScrollBarVisibility="Auto"
                          ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                         Loaded="Editor_Loaded"
                          TextChanged="Editor_TextChanged"
                          SelectionChanged="Editor_SelectionChanged"
                          PointerWheelChanged="Editor_PointerWheelChanged"
