@@ -203,6 +203,8 @@ public sealed partial class MainWindow : Window
                 }
 
                 session.CursorPosition = data.CursorPosition;
+                if (session.FilePath is not null && File.Exists(session.FilePath))
+                    AttachFileWatcher(session);
                 AttachTab(session);
             }
 
@@ -426,6 +428,7 @@ public sealed partial class MainWindow : Window
         if (TabStrip.TabItems.Count == 1)
         {
             // Last tab — reset rather than close
+            DetachFileWatcher(session);
             _suppressTextChanged = true;
             Editor.Text = string.Empty;
             _suppressTextChanged = false;
@@ -442,6 +445,7 @@ public sealed partial class MainWindow : Window
         }
         else
         {
+            DetachFileWatcher(session);
             TabStrip.TabItems.Remove(tab);
             InvalidateTabLayout();
             // Persist remaining tabs immediately so a mid-session close is not lost
@@ -729,6 +733,7 @@ public sealed partial class MainWindow : Window
     {
         if (ActiveSession is not { } session) return;
 
+        DetachFileWatcher(session);
         _suppressTextChanged = true;
         Editor.Text = string.Empty;
         _suppressTextChanged = false;
@@ -825,6 +830,7 @@ public sealed partial class MainWindow : Window
             session.Document = state;
             session.CursorPosition = 0;
 
+            AttachFileWatcher(session);
             RefreshTabHeader(session);
 
             // Only update the editor if this session is active
@@ -843,12 +849,69 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// Attaches a <see cref="FileChangeWatcher"/> to <paramref name="session"/> for its
+    /// current FilePath, disposing any previous watcher. Marshals events onto the UI
+    /// thread and prompts the user to reload.
+    /// </summary>
+    private void AttachFileWatcher(TabSession session)
+    {
+        DetachFileWatcher(session);
+        if (session.FilePath is null) return;
+
+        try
+        {
+            session.Watcher = new FileChangeWatcher(session.FilePath, () =>
+            {
+                DispatcherQueue.TryEnqueue(async () => await OnExternalFileChangeAsync(session));
+            });
+        }
+        catch
+        {
+            // Best-effort. A watcher failure (network drive, permissions) shouldn't
+            // prevent the tab from opening.
+        }
+    }
+
+    private static void DetachFileWatcher(TabSession session)
+    {
+        session.Watcher?.Dispose();
+        session.Watcher = null;
+    }
+
+    private async Task OnExternalFileChangeAsync(TabSession session)
+    {
+        // The watcher catches our own writes too (we suppress those, but be defensive).
+        if (session.FilePath is null) return;
+
+        var dialog = new ContentDialog
+        {
+            Title = "File changed",
+            Content = $"{System.IO.Path.GetFileName(session.FilePath)} was modified outside Inklet. " +
+                      (session.IsModified
+                          ? "Reloading will discard your unsaved changes."
+                          : "Reload to see the latest version."),
+            PrimaryButtonText = "Reload",
+            CloseButtonText = "Keep my version",
+            DefaultButton = session.IsModified ? ContentDialogButton.Close : ContentDialogButton.Primary,
+            XamlRoot = Content.XamlRoot,
+        };
+
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+        await LoadFileIntoSessionAsync(session, session.FilePath);
+    }
+
     private async Task<bool> SaveSessionAsync(TabSession session)
     {
         if (session.FilePath is null) return await SaveAsSessionAsync(session);
 
         try
         {
+            // Tell the watcher to ignore our own write — otherwise the user gets
+            // a "file changed externally" prompt every time they save.
+            session.Watcher?.SuppressNextChange();
+
             await FileService.WriteFileAsync(
                 session.FilePath, session.Content,
                 session.Document.Encoding, session.Document.HasBom,
@@ -889,6 +952,8 @@ public sealed partial class MainWindow : Window
                 session.Document.LineEnding);
 
             session.MarkSaved();
+            // Save As changes the watched path — re-attach to the new location.
+            AttachFileWatcher(session);
             RefreshTabHeader(session);
             UpdateTitle(session);
             UpdateStatusBar(session);

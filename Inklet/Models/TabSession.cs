@@ -1,5 +1,6 @@
 using System;
 using System.Text.Json.Serialization;
+using Inklet.Services;
 
 namespace Inklet.Models;
 
@@ -96,6 +97,12 @@ public sealed class TabSession
     /// tab so that switching away and back doesn't re-scan the whole document.
     /// </summary>
     internal LineIndex Lines { get; } = new();
+
+    /// <summary>
+    /// Per-tab watcher for external file modifications. Null for untitled tabs.
+    /// MainWindow attaches/detaches this when FilePath changes.
+    /// </summary>
+    internal FileChangeWatcher? Watcher { get; set; }
 
     /// <summary>
     /// Whether the tab has unsaved changes. O(1) — see <see cref="Content"/>.
