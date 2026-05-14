@@ -1731,58 +1731,73 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Reads the editor's content via <c>EM_GETTEXTEX</c> directly on the RichEdit HWND.
-    /// WinUI's <see cref="ITextDocument.GetText"/> caps reads at the same ~512 KB
-    /// boundary as its setter — so for any reasonably large document we'd lose data
-    /// on the round-trip from on-disk → editor → on-disk if we used the WinUI path.
+    /// Reads the editor's full content via <see cref="ITextDocument.SaveToStream"/>.
+    /// WinUI's <see cref="ITextDocument.GetText"/> caps at the same ~512 KB boundary
+    /// as its setter — using it to capture session content from a large document
+    /// would silently truncate everything after that point on every save and on
+    /// every keystroke (Editor_TextChanged stamps session.Content). The streaming
+    /// path mirrors how we LOAD large content via <see cref="LoadEditorTextLarge"/>.
     ///
     /// <para>
-    /// Falls back to the WinUI path if the HWND lookup hasn't succeeded yet — at
-    /// startup before the editor is loaded that may still be the case.
+    /// Renormalises any bare CR back to CRLF — RichEdit converts CRLF to bare CR
+    /// internally, but the rest of the codebase (line ending detection, file save,
+    /// session persistence) expects CRLF on Windows.
     /// </para>
     /// </summary>
     private string GetEditorTextLarge()
     {
-        if (_richEditHwnd == IntPtr.Zero)
-            return Editor.GetPlainText();
-
-        // Ask the control how many UTF-16 chars it currently holds.
-        var lengthEx = new GETTEXTLENGTHEX { Flags = GTL_DEFAULT | GTL_NUMCHARS, Codepage = CP_UNICODE };
-        IntPtr lenPtr = Marshal.AllocHGlobal(Marshal.SizeOf<GETTEXTLENGTHEX>());
-        IntPtr bufPtr = IntPtr.Zero;
         try
         {
-            Marshal.StructureToPtr(lengthEx, lenPtr, fDeleteOld: false);
-            int charCount = SendMessage(_richEditHwnd, EM_GETTEXTLENGTHEX, lenPtr, IntPtr.Zero).ToInt32();
-            if (charCount <= 0) return string.Empty;
+            using var ms = new Windows.Storage.Streams.InMemoryRandomAccessStream();
+            Editor.Document.SaveToStream(TextGetOptions.None, ms);
+            ms.Seek(0);
 
-            // EM_GETTEXTEX wants the destination buffer size in BYTES including the
-            // terminating null. Add one char for the null and double for UTF-16.
-            int bufBytes = (charCount + 1) * sizeof(char);
-            bufPtr = Marshal.AllocHGlobal(bufBytes);
+            using var reader = new Windows.Storage.Streams.DataReader(ms);
+            reader.UnicodeEncoding = Windows.Storage.Streams.UnicodeEncoding.Utf16LE;
+            reader.ByteOrder = Windows.Storage.Streams.ByteOrder.LittleEndian;
 
-            var getTextEx = new GETTEXTEX
-            {
-                CbCh = bufBytes,
-                Flags = GT_DEFAULT,
-                Codepage = CP_UNICODE,
-                LpDefaultChar = IntPtr.Zero,
-                LpUsedDefChar = IntPtr.Zero,
-            };
-            IntPtr getPtr = Marshal.AllocHGlobal(Marshal.SizeOf<GETTEXTEX>());
-            try
-            {
-                Marshal.StructureToPtr(getTextEx, getPtr, fDeleteOld: false);
-                int written = SendMessage(_richEditHwnd, EM_GETTEXTEX, getPtr, bufPtr).ToInt32();
-                return written > 0 ? Marshal.PtrToStringUni(bufPtr, written) ?? string.Empty : string.Empty;
-            }
-            finally { Marshal.FreeHGlobal(getPtr); }
+            var size = (uint)ms.Size;
+            if (size == 0) return string.Empty;
+
+            reader.LoadAsync(size).AsTask().GetAwaiter().GetResult();
+            // ReadString takes a code-unit count, not a byte count, for the configured encoding.
+            var text = reader.ReadString(size / sizeof(char));
+
+            // RichEdit normalises CRLF -> CR on load. Restore CRLF for the rest of
+            // the pipeline. Replace bare \r (not part of \r\n) with \r\n. Use a
+            // single pass so we don't double up.
+            return NormalizeBareCrToCrlf(text);
         }
-        finally
+        catch
         {
-            Marshal.FreeHGlobal(lenPtr);
-            if (bufPtr != IntPtr.Zero) Marshal.FreeHGlobal(bufPtr);
+            // Fall back to the capped WinUI path rather than throw — we'd rather show
+            // a truncated buffer than crash on save.
+            return Editor.GetPlainText();
         }
+    }
+
+    /// <summary>
+    /// Replaces every bare <c>\r</c> with <c>\r\n</c>. Bare-CR is what RichEdit emits
+    /// after CRLF normalisation; we want CRLF back for the file save path.
+    /// </summary>
+    private static string NormalizeBareCrToCrlf(string s)
+    {
+        if (string.IsNullOrEmpty(s) || s.IndexOf('\r') < 0) return s;
+        var sb = new System.Text.StringBuilder(s.Length + (s.Length / 80));
+        for (int i = 0; i < s.Length; i++)
+        {
+            char c = s[i];
+            if (c == '\r')
+            {
+                sb.Append('\r').Append('\n');
+                if (i + 1 < s.Length && s[i + 1] == '\n') i++; // skip if already CRLF
+            }
+            else
+            {
+                sb.Append(c);
+            }
+        }
+        return sb.ToString();
     }
 
     /// <summary>
