@@ -160,6 +160,73 @@ public class EncodingDetectorTests
         Assert.IsTrue(EncodingDetector.IsValidUtf8(data, 1));
     }
 
+    // -----------------------------------------------------------------------
+    // UTF-8 validator edge cases (often missed by hand-rolled validators)
+    // -----------------------------------------------------------------------
+
+    [TestMethod]
+    public void WhenOverlongTwoByteSequenceThenRejected()
+    {
+        // 0xC0 0xAF would decode to '/' but is a forbidden overlong encoding.
+        // The validator rejects 0xC0/0xC1 as lead bytes (only accepts >= 0xC2).
+        byte[] data = [0xC0, 0xAF];
+
+        Assert.IsFalse(EncodingDetector.IsValidUtf8(data, data.Length));
+    }
+
+    [TestMethod]
+    public void WhenContinuationByteWithoutLeaderThenRejected()
+    {
+        // A bare continuation byte (0x80-0xBF) without a preceding lead byte is invalid.
+        byte[] data = [0x80];
+
+        Assert.IsFalse(EncodingDetector.IsValidUtf8(data, data.Length));
+    }
+
+    [TestMethod]
+    public void WhenLeadByteFollowedByAsciiThenRejected()
+    {
+        // 0xC3 expects a continuation byte; following with 'A' (0x41) is invalid.
+        byte[] data = [0xC3, 0x41];
+
+        Assert.IsFalse(EncodingDetector.IsValidUtf8(data, data.Length));
+    }
+
+    [TestMethod]
+    public void WhenTwoByteSequenceAtBufferEndIsTruncatedThenRejected()
+    {
+        // Lead byte at the very end of the real buffer with no continuation.
+        byte[] data = [0x68, 0xC3];
+
+        Assert.IsFalse(EncodingDetector.IsValidUtf8(data, data.Length));
+    }
+
+    [TestMethod]
+    public void WhenAsciiOnlyFullBufferThenAccepted()
+    {
+        byte[] data = "Hello, World!"u8.ToArray();
+
+        Assert.IsTrue(EncodingDetector.IsValidUtf8(data, data.Length));
+    }
+
+    [TestMethod]
+    public void WhenValidThreeByteSequenceThenAccepted()
+    {
+        // U+20AC (€) = 0xE2 0x82 0xAC
+        byte[] data = [0xE2, 0x82, 0xAC];
+
+        Assert.IsTrue(EncodingDetector.IsValidUtf8(data, data.Length));
+    }
+
+    [TestMethod]
+    public void WhenValidFourByteSequenceThenAccepted()
+    {
+        // U+1F600 (😀) = 0xF0 0x9F 0x98 0x80
+        byte[] data = [0xF0, 0x9F, 0x98, 0x80];
+
+        Assert.IsTrue(EncodingDetector.IsValidUtf8(data, data.Length));
+    }
+
     [TestMethod]
     public void WhenAnsiFallbackThenCodePageIsResolvedNotZero()
     {

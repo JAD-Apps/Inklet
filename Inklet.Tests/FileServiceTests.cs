@@ -329,4 +329,26 @@ public class FileServiceTests
     {
         Assert.ThrowsExactly<ArgumentNullException>(() => FileService.IsBinaryFile(null!));
     }
+
+    // -----------------------------------------------------------------------
+    // Round-trip — non-UTF-8 encoded files preserve content exactly
+    // -----------------------------------------------------------------------
+
+    [TestMethod]
+    public async Task WhenWriteAndReadWindows1252RoundTripThenContentPreserved()
+    {
+        // U+201C "LEFT DOUBLE QUOTATION MARK" lives at 0x93 in Windows-1252 but is a
+        // multi-byte sequence in UTF-8. A round-trip via FileService must keep it intact.
+        var filePath = Path.Combine(_testDir, "win1252.txt");
+        var w1252 = Encoding.GetEncoding(1252);
+        var original = "He said “hello”";
+
+        await FileService.WriteFileAsync(filePath, original, w1252, false, LineEndingStyle.CrLf);
+        var (content, state) = await FileService.ReadFileAsync(filePath);
+
+        Assert.AreEqual(original, content);
+        // The detector may report the file as Windows-1252 or some other ANSI page
+        // depending on the system locale; the key contract is content fidelity.
+        Assert.AreNotEqual(0, state.Encoding.CodePage);
+    }
 }
