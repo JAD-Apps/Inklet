@@ -116,6 +116,70 @@ public class SessionTests
     }
 
     // -----------------------------------------------------------------------
+    // Dirty flag — fast O(1) path
+    // -----------------------------------------------------------------------
+
+    [TestMethod]
+    public void WhenContentSetThenIsModifiedFlipsTrue()
+    {
+        var session = new TabSession();
+
+        session.Content = "typed";
+
+        Assert.IsTrue(session.IsModified);
+    }
+
+    [TestMethod]
+    public void WhenMarkSavedThenIsModifiedFlipsFalse()
+    {
+        var session = new TabSession { Content = "edited", SavedContent = "original" };
+        Assert.IsTrue(session.IsModified);
+
+        session.MarkSaved();
+
+        Assert.IsFalse(session.IsModified);
+        Assert.AreEqual("edited", session.SavedContent);
+    }
+
+    [TestMethod]
+    public void WhenMarkSavedThenSubsequentEditMarksDirtyAgain()
+    {
+        var session = new TabSession { Content = "v1" };
+        session.MarkSaved();
+
+        session.Content = "v2";
+
+        Assert.IsTrue(session.IsModified);
+    }
+
+    [TestMethod]
+    public void WhenSameReferenceAssignedThenNoSpuriousDirty()
+    {
+        var session = new TabSession();
+        session.Content = "x";
+        session.MarkSaved();
+        var sameRef = session.Content;
+
+        session.Content = sameRef; // no-op assignment
+
+        Assert.IsFalse(session.IsModified);
+    }
+
+    [TestMethod]
+    public void WhenContentEqualsSavedByReferenceThenIsModifiedFalse()
+    {
+        // Mirrors the file-load path where Content and SavedContent receive the
+        // same string reference (the just-decoded file bytes).
+        var loaded = "from disk";
+        var session = new TabSession();
+
+        session.Content = loaded;
+        session.SavedContent = loaded;
+
+        Assert.IsFalse(session.IsModified);
+    }
+
+    // -----------------------------------------------------------------------
     // PersistedTabData produced by the four scenarios (mirrors PersistSession)
     // -----------------------------------------------------------------------
 

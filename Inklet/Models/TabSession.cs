@@ -42,16 +42,47 @@ public sealed record PersistedTabData
 /// </summary>
 public sealed class TabSession
 {
-    internal Guid Id { get; } = Guid.NewGuid();
-
     /// <summary>File path on disk, or null for untitled tabs.</summary>
     public string? FilePath { get; set; }
 
-    /// <summary>Current text content of the tab.</summary>
-    public string Content { get; set; } = string.Empty;
+    private string _content = string.Empty;
+    private string _savedContent = string.Empty;
+    private bool _isDirty;
 
-    /// <summary>Content as it was when last saved (for dirty-check).</summary>
-    public string SavedContent { get; set; } = string.Empty;
+    /// <summary>
+    /// Current text content of the tab. Setting this stamps the dirty flag in O(1)
+    /// — the previous implementation did a full O(N) string equality on every
+    /// <see cref="IsModified"/> read, called per-keystroke from the tab title refresh.
+    /// </summary>
+    public string Content
+    {
+        get => _content;
+        set
+        {
+            // Reference-equal updates are no-ops (e.g. assigning a captured snapshot
+            // back to itself). Anything else marks the tab dirty; like Notepad we don't
+            // try to detect "user typed and undid back to saved" — that pessimisation
+            // would re-introduce the per-keystroke O(N) compare.
+            if (ReferenceEquals(_content, value)) return;
+            _content = value;
+            _isDirty = !ReferenceEquals(_content, _savedContent);
+        }
+    }
+
+    /// <summary>
+    /// Content as it was when last saved. Setting this clears the dirty flag iff the
+    /// new value is the same reference as the current Content; otherwise it just
+    /// records the baseline. Prefer <see cref="MarkSaved"/> in save paths.
+    /// </summary>
+    public string SavedContent
+    {
+        get => _savedContent;
+        set
+        {
+            _savedContent = value;
+            _isDirty = !ReferenceEquals(_content, _savedContent);
+        }
+    }
 
     /// <summary>Cursor position within the content.</summary>
     public int CursorPosition { get; set; }
@@ -59,10 +90,24 @@ public sealed class TabSession
     /// <summary>Document metadata (encoding, line ending, etc.).</summary>
     public DocumentState Document { get; set; } = new();
 
-    /// <summary>Whether the tab has unsaved changes.</summary>
-    public bool IsModified => Content != SavedContent;
+    /// <summary>
+    /// Whether the tab has unsaved changes. O(1) — see <see cref="Content"/>.
+    /// </summary>
+    public bool IsModified => _isDirty;
+
+    /// <summary>
+    /// Marks the current content as saved. Use this after a successful write rather
+    /// than assigning <c>SavedContent = Content</c> — the former is intent-revealing
+    /// and the latter requires the caller to know the dirty flag will reset because
+    /// the references match.
+    /// </summary>
+    public void MarkSaved()
+    {
+        _savedContent = _content;
+        _isDirty = false;
+    }
 
     /// <summary>Label shown on the tab strip.</summary>
-    public string TabTitle => (IsModified ? "*" : "") +
+    public string TabTitle => (_isDirty ? "*" : "") +
                                (FilePath is null ? "Untitled" : System.IO.Path.GetFileName(FilePath));
 }

@@ -846,7 +846,7 @@ public sealed partial class MainWindow : Window
                 session.Document.Encoding, session.Document.HasBom,
                 session.Document.LineEnding);
 
-            session.SavedContent = session.Content;
+            session.MarkSaved();
             RefreshTabHeader(session);
             UpdateTitle(session);
             return true;
@@ -880,7 +880,7 @@ public sealed partial class MainWindow : Window
                 session.Document.Encoding, session.Document.HasBom,
                 session.Document.LineEnding);
 
-            session.SavedContent = session.Content;
+            session.MarkSaved();
             RefreshTabHeader(session);
             UpdateTitle(session);
             UpdateStatusBar(session);
@@ -1432,9 +1432,18 @@ public sealed partial class MainWindow : Window
         if (_suppressTextChanged) return;
         if (ActiveSession is not { } session) return;
 
+        bool wasDirty = session.IsModified;
         session.Content = Editor.Text;
-        RefreshTabHeader(session);
-        UpdateTitle(session);
+
+        // Tab header / title bar only need refreshing when the dirty state actually
+        // flips. This is the per-keystroke hot path — RefreshTabHeader iterates all
+        // tabs, and AppWindow.Title is a COM call into the title bar. Doing them
+        // unconditionally on every keypress was visibly laggy on large documents.
+        if (session.IsModified != wasDirty)
+        {
+            RefreshTabHeader(session);
+            UpdateTitle(session);
+        }
     }
 
     private void Editor_SelectionChanged(object _, RoutedEventArgs _e)
