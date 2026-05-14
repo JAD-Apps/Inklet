@@ -121,4 +121,21 @@ public class EncodingDetectorTests
         Assert.AreEqual(65001, encoding.CodePage);
         Assert.IsTrue(hasBom);
     }
+
+    [TestMethod]
+    public void WhenAnsiFallbackThenCodePageIsResolvedNotZero()
+    {
+        // Bytes that are not valid UTF-8 and not detected with high enough confidence
+        // by UTF.Unknown — forces the ANSI fallback. The resolved code page must be a
+        // concrete value (e.g., 1252) so the session-persisted encoding survives a
+        // locale change between launches.
+        byte[] data = [0xFF, 0xFE]; // UTF-16 LE BOM-ish but only 2 bytes — actually triggers UTF-16 LE detection
+        // Use a byte that explicitly fails UTF-8 validation:
+        data = [0xC0, 0x40, 0xC1, 0x41]; // overlong / invalid UTF-8 leading bytes
+
+        var (encoding, _) = EncodingDetector.Detect(data);
+
+        Assert.AreNotEqual(0, encoding.CodePage,
+            "Persisted code page must not be 0 (session restore would re-resolve to a possibly-different ANSI page)");
+    }
 }

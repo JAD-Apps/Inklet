@@ -53,8 +53,11 @@ public static class EncodingDetector
             }
         }
 
-        // Default to system ANSI code page
-        return (Encoding.GetEncoding(0), false);
+        // Default to system ANSI code page. Resolve to the concrete code page now
+        // (e.g. 1252 on en-US, 932 on ja-JP) so that the persisted session encoding
+        // doesn't shift if the file is reopened on a machine with a different locale.
+        var ansi = Encoding.GetEncoding(0);
+        return (Encoding.GetEncoding(ansi.CodePage), false);
     }
 
     /// <summary>
