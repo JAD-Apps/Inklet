@@ -304,15 +304,19 @@
                          Drop="Editor_Drop"
                          AutomationProperties.AutomationId="EditorTextBox">
                 <!--
-                    Override the default themed brushes so hover/focus/disabled
-                    states stay transparent — the editor sits over the Mica backdrop
-                    and any hover fill or border looks like a stray rectangle.
+                    The editor cannot use a fully-transparent background: RichEdit draws its
+                    caret with a DSTINVERT blit, and inverting transparent pixels produces no
+                    visible output (the caret was invisible to the user but visible in
+                    screenshots, which capture the inverted alpha). LayerFillColorDefault is
+                    a near-transparent system fill that still has enough opacity for the
+                    caret invert to land on real pixels.
+                    Border brushes stay transparent — only the fill needs alpha for caret.
                 -->
                 <RichEditBox.Resources>
-                    <SolidColorBrush x:Key="TextControlBackground" Color="Transparent" />
-                    <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="Transparent" />
-                    <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="Transparent" />
-                    <SolidColorBrush x:Key="TextControlBackgroundDisabled" Color="Transparent" />
+                    <SolidColorBrush x:Key="TextControlBackground" Color="{ThemeResource LayerFillColorDefault}" />
+                    <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="{ThemeResource LayerFillColorDefault}" />
+                    <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="{ThemeResource LayerFillColorDefault}" />
+                    <SolidColorBrush x:Key="TextControlBackgroundDisabled" Color="{ThemeResource LayerFillColorDefault}" />
                     <SolidColorBrush x:Key="TextControlBorderBrush" Color="Transparent" />
                     <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="Transparent" />
                     <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="Transparent" />
