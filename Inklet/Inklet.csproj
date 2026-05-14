@@ -14,6 +14,10 @@
     <WinUISDKReferences>false</WinUISDKReferences>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Suppress the XAML markup compiler's auto-generated Main; we ship our own
+         in Program.cs with [MTAThread] so the binary runs correctly both standalone
+         and inside an MSIX container. See Program.cs for the rationale. -->
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
