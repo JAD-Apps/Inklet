@@ -57,6 +57,13 @@ public sealed partial class MainWindow : Window
     // wasted work (especially for TabScrollTimer_RepeatTick at 50 ms cadence).
     private ScrollViewer? _cachedTabsScrollViewer;
 
+    // Autosave: every 30 s, if any tab is dirty, snapshot the session to disk so a
+    // power-loss / process-kill in the middle of a long editing session doesn't lose
+    // unsaved Untitled-tab content. Coalesced — skipped if a save is already in flight.
+    private static readonly TimeSpan AutosaveInterval = TimeSpan.FromSeconds(30);
+    private DispatcherTimer? _autosaveTimer;
+    private int _autosaveInFlight; // 0 = idle, 1 = saving (Interlocked-managed)
+
     // ---------------------------------------------------------------
     // Tab management
     // ---------------------------------------------------------------
@@ -79,8 +86,45 @@ public sealed partial class MainWindow : Window
         SetupCustomTitleBar();
         RestoreSettings();
         AppWindow.Closing += AppWindow_Closing;
+        StartAutosaveTimer();
 
         _ = InitialLoadAsync();
+    }
+
+    private void StartAutosaveTimer()
+    {
+        _autosaveTimer = new DispatcherTimer { Interval = AutosaveInterval };
+        _autosaveTimer.Tick += AutosaveTick;
+        _autosaveTimer.Start();
+    }
+
+    private async void AutosaveTick(object? sender, object e)
+    {
+        // Coalesce: if a save is already running we skip this tick rather than queueing
+        // a second concurrent write.
+        if (Interlocked.CompareExchange(ref _autosaveInFlight, 1, 0) != 0) return;
+
+        try
+        {
+            // Only persist if at least one tab is dirty — autosaving an unchanged
+            // session every 30 s would needlessly thrash the disk.
+            bool anyDirty = false;
+            foreach (var tvi in TabStrip.TabItems.OfType<TabViewItem>())
+            {
+                if (tvi.Tag is TabSession s && s.IsModified) { anyDirty = true; break; }
+            }
+            if (!anyDirty) return;
+
+            await PersistSessionAsync();
+        }
+        catch
+        {
+            // Autosave is best-effort; the next tick or the close handler will retry.
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _autosaveInFlight, 0);
+        }
     }
 
     #region Window Setup
