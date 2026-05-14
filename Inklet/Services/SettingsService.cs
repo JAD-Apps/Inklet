@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
+using System.Threading.Tasks;
 using Inklet.Models;
 using Windows.Storage;
 
@@ -187,6 +188,45 @@ internal sealed class SettingsService
             }
             catch { }
         }
+    }
+
+    /// <summary>
+    /// Asynchronously persists session tabs without blocking the UI thread.
+    /// Returns false if the write failed (e.g., disk full, permission denied).
+    /// Used by the window-close path so the UI thread is not blocked while writing
+    /// large unsaved buffers.
+    /// </summary>
+    internal async Task<bool> SaveSessionTabsAsync(IReadOnlyList<PersistedTabData> tabs)
+    {
+        try
+        {
+            var path = GetSessionFilePath();
+            if (path is null) return false;
+            var json = JsonSerializer.Serialize(tabs, s_jsonOptions);
+            await WriteSessionFileAtomicAsync(path, json).ConfigureAwait(false);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Async counterpart to <see cref="WriteSessionFileAtomic"/>. The rename is still
+    /// synchronous (it's already atomic on NTFS); only the bytes-to-disk part is awaited.
+    /// </summary>
+    internal static async Task WriteSessionFileAtomicAsync(string path, string content)
+    {
+        var tmp = path + ".tmp";
+        var backup = path + ".bak";
+
+        await File.WriteAllTextAsync(tmp, content).ConfigureAwait(false);
+
+        if (File.Exists(path))
+            File.Replace(tmp, path, backup, ignoreMetadataErrors: true);
+        else
+            File.Move(tmp, path);
     }
 
     /// <summary>

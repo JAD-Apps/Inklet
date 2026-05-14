@@ -144,4 +144,37 @@ public class SettingsServiceTests
             Assert.AreEqual($"file{i}.txt", roundTrip[0].FilePath);
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Async write — used by the window-close path
+    // -----------------------------------------------------------------------
+
+    [TestMethod]
+    public async Task WhenAsyncWriteThenFileExistsWithContent()
+    {
+        await SettingsService.WriteSessionFileAtomicAsync(_path, "[{\"path\":\"async.txt\"}]");
+
+        Assert.IsTrue(File.Exists(_path));
+        var result = SettingsService.ReadSessionFile(_path);
+        Assert.AreEqual("async.txt", result[0].FilePath);
+    }
+
+    [TestMethod]
+    public async Task WhenAsyncOverwriteExistingFileThenBackupIsCreated()
+    {
+        File.WriteAllText(_path, "[]");
+
+        await SettingsService.WriteSessionFileAtomicAsync(_path, "[{\"path\":\"new.txt\"}]");
+
+        Assert.IsTrue(File.Exists(_path + ".bak"));
+        Assert.AreEqual("[]", File.ReadAllText(_path + ".bak"));
+    }
+
+    [TestMethod]
+    public async Task WhenAsyncWriteCompletesThenNoTempFileLeftBehind()
+    {
+        await SettingsService.WriteSessionFileAtomicAsync(_path, "[]");
+
+        Assert.IsFalse(File.Exists(_path + ".tmp"));
+    }
 }

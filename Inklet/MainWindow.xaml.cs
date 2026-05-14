@@ -336,11 +336,30 @@ public sealed partial class MainWindow : Window
 
     private void PersistSession()
     {
+        var tabData = BuildSessionSnapshot();
+        _settings.SessionTabs = tabData;
+        _settings.LastActiveTabIndex = TabStrip.SelectedIndex;
+    }
+
+    /// <summary>
+    /// Async counterpart to <see cref="PersistSession"/> used by the window-close path.
+    /// The session JSON write happens on a thread-pool thread so the UI thread is not
+    /// blocked when persisting many unsaved buffers.
+    /// </summary>
+    private async Task PersistSessionAsync()
+    {
+        var tabData = BuildSessionSnapshot();
+        _settings.LastActiveTabIndex = TabStrip.SelectedIndex;
+        await _settings.SaveSessionTabsAsync(tabData).ConfigureAwait(false);
+    }
+
+    private List<PersistedTabData> BuildSessionSnapshot()
+    {
         // Always flush the active tab's cursor position before writing — Editor_TextChanged
         // keeps session.Content live, but CursorPosition is only synced on tab-switch.
         SaveCurrentTabState();
 
-        var tabData = TabStrip.TabItems
+        return TabStrip.TabItems
             .OfType<TabViewItem>()
             .Select(tvi => tvi.Tag is TabSession s ? new PersistedTabData
             {
@@ -357,9 +376,6 @@ public sealed partial class MainWindow : Window
             .Where(d => d is not null)
             .Select(d => d!)
             .ToList();
-
-        _settings.SessionTabs = tabData;
-        _settings.LastActiveTabIndex = TabStrip.SelectedIndex;
     }
 
     // XAML event handlers
@@ -1473,11 +1489,34 @@ public sealed partial class MainWindow : Window
 
     #region Window Close
 
-    private void AppWindow_Closing(AppWindow _, AppWindowClosingEventArgs _args)
+    // True once the async session save has completed and we're ready to actually close.
+    private bool _allowClose;
+
+    private async void AppWindow_Closing(AppWindow _, AppWindowClosingEventArgs args)
     {
-        SaveCurrentTabState();
-        SaveWindowSize();
-        PersistSession();
+        if (_allowClose) return;
+
+        // Block the OS close until we've finished writing — otherwise large unsaved
+        // buffers can be silently dropped if the process exits before the write finishes.
+        args.Cancel = true;
+
+        try
+        {
+            SaveCurrentTabState();
+            SaveWindowSize();
+            await PersistSessionAsync();
+        }
+        catch
+        {
+            // Even on save failure we must let the window close — a save failure should
+            // never trap the user inside the app. The .bak from the previous successful
+            // close (see SettingsService.WriteSessionFileAtomicAsync) is still on disk.
+        }
+        finally
+        {
+            _allowClose = true;
+            Close();
+        }
     }
 
     private void SaveWindowSize()
