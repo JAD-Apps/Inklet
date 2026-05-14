@@ -21,6 +21,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="Inklet.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Content Include="..\Inklet.png" Link="Assets\Inklet.png" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\Inklet.ico" Link="Assets\Inklet.ico" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>

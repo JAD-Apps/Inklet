@@ -171,9 +171,8 @@ internal sealed class SettingsService
             try
             {
                 var path = GetSessionFilePath();
-                if (path is null || !File.Exists(path)) return [];
-                var json = File.ReadAllText(path);
-                return JsonSerializer.Deserialize<PersistedTabData[]>(json) ?? [];
+                if (path is null) return [];
+                return ReadSessionFile(path);
             }
             catch { return []; }
         }
@@ -184,9 +183,66 @@ internal sealed class SettingsService
                 var path = GetSessionFilePath();
                 if (path is null) return;
                 var json = JsonSerializer.Serialize(value, s_jsonOptions);
-                File.WriteAllText(path, json);
+                WriteSessionFileAtomic(path, json);
             }
             catch { }
+        }
+    }
+
+    /// <summary>
+    /// Reads and deserializes the session file. If the primary file is missing or
+    /// corrupted, falls back to the .bak copy left by <see cref="WriteSessionFileAtomic"/>.
+    /// </summary>
+    internal static IReadOnlyList<PersistedTabData> ReadSessionFile(string path)
+    {
+        if (TryDeserialize(path, out var tabs)) return tabs;
+
+        var backup = path + ".bak";
+        if (File.Exists(backup) && TryDeserialize(backup, out var backupTabs)) return backupTabs;
+
+        return [];
+    }
+
+    private static bool TryDeserialize(string path, out IReadOnlyList<PersistedTabData> result)
+    {
+        result = [];
+        if (!File.Exists(path)) return false;
+        try
+        {
+            var json = File.ReadAllText(path);
+            if (string.IsNullOrWhiteSpace(json)) return false;
+            var tabs = JsonSerializer.Deserialize<PersistedTabData[]>(json);
+            if (tabs is null) return false;
+            result = tabs;
+            return true;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>
+    /// Writes <paramref name="content"/> to <paramref name="path"/> atomically.
+    /// The write goes to a temp sibling and is then renamed into place via
+    /// <see cref="File.Replace(string, string, string?, bool)"/>, leaving a .bak copy of the
+    /// previous version. A crash mid-write therefore cannot corrupt the live file:
+    /// the previous file remains intact on disk.
+    /// </summary>
+    internal static void WriteSessionFileAtomic(string path, string content)
+    {
+        var tmp = path + ".tmp";
+        var backup = path + ".bak";
+
+        // Write the new content to a sibling file.
+        File.WriteAllText(tmp, content);
+
+        if (File.Exists(path))
+        {
+            // File.Replace is atomic on NTFS — the live file is never absent, even
+            // if the process is killed mid-call.
+            File.Replace(tmp, path, backup, ignoreMetadataErrors: true);
+        }
+        else
+        {
+            File.Move(tmp, path);
         }
     }
 
