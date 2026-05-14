@@ -1013,27 +1013,53 @@ public sealed partial class MainWindow : Window
     private void FindNext_Click(object _, RoutedEventArgs _e) => FindNext();
     private void FindPrev_Click(object _, RoutedEventArgs _e) => FindPrevious();
 
+    /// <summary>
+    /// Returns the editor's text via the cached snapshot on the active session.
+    /// Editor.Text is a COM property whose getter materialises a fresh string on every
+    /// access — we already keep a reference on the active TabSession via Editor_TextChanged,
+    /// so reusing it avoids a second materialisation per find op.
+    /// </summary>
+    private string GetEditorText()
+        => ActiveSession?.Content ?? Editor.Text;
+
     private void FindNext()
     {
-        var text = FindTextBox.Text;
-        if (string.IsNullOrEmpty(text)) return;
+        var needle = FindTextBox.Text;
+        if (string.IsNullOrEmpty(needle)) return;
+
+        var haystack = GetEditorText();
         var cmp = FindMatchCase.IsChecked == true ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
         var start = Editor.SelectionStart + Editor.SelectionLength;
-        var idx = Editor.Text.IndexOf(text, start, cmp);
-        if (idx < 0) idx = Editor.Text.IndexOf(text, 0, cmp);
-        if (idx >= 0) { Editor.SelectionStart = idx; Editor.SelectionLength = text.Length; Editor.Focus(FocusState.Programmatic); }
+
+        var idx = haystack.IndexOf(needle, start, cmp);
+        if (idx < 0) idx = haystack.IndexOf(needle, 0, cmp);
+        if (idx >= 0)
+        {
+            Editor.SelectionStart = idx;
+            Editor.SelectionLength = needle.Length;
+            Editor.Focus(FocusState.Programmatic);
+        }
     }
 
     private void FindPrevious()
     {
-        var text = FindTextBox.Text;
-        if (string.IsNullOrEmpty(text)) return;
+        var needle = FindTextBox.Text;
+        if (string.IsNullOrEmpty(needle)) return;
+
+        var haystack = GetEditorText();
         var cmp = FindMatchCase.IsChecked == true ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
         var end = Editor.SelectionStart;
-        if (end <= 0) end = Editor.Text.Length;
-        var idx = Editor.Text.LastIndexOf(text, end - 1, cmp);
-        if (idx < 0 && Editor.Text.Length > 0) idx = Editor.Text.LastIndexOf(text, Editor.Text.Length - 1, cmp);
-        if (idx >= 0) { Editor.SelectionStart = idx; Editor.SelectionLength = text.Length; Editor.Focus(FocusState.Programmatic); }
+        if (end <= 0) end = haystack.Length;
+
+        var idx = haystack.LastIndexOf(needle, end - 1, cmp);
+        if (idx < 0 && haystack.Length > 0)
+            idx = haystack.LastIndexOf(needle, haystack.Length - 1, cmp);
+        if (idx >= 0)
+        {
+            Editor.SelectionStart = idx;
+            Editor.SelectionLength = needle.Length;
+            Editor.Focus(FocusState.Programmatic);
+        }
     }
 
     private void Replace_Click(object _, RoutedEventArgs _e)
@@ -1043,7 +1069,7 @@ public sealed partial class MainWindow : Window
         if (Editor.SelectedText.Equals(FindTextBox.Text, cmp))
         {
             var start = Editor.SelectionStart;
-            var t = Editor.Text;
+            var t = GetEditorText();
             Editor.Text = string.Concat(t.AsSpan(0, start), ReplaceTextBox.Text, t.AsSpan(start + Editor.SelectionLength));
             Editor.SelectionStart = start + ReplaceTextBox.Text.Length;
         }
@@ -1052,10 +1078,16 @@ public sealed partial class MainWindow : Window
 
     private void ReplaceAll_Click(object _, RoutedEventArgs _e)
     {
-        if (string.IsNullOrEmpty(FindTextBox.Text)) return;
-        var cmp = FindMatchCase.IsChecked == true ? StringComparison.CurrentCulture : StringComparison.CurrentCultureIgnoreCase;
-        var newText = Editor.Text.Replace(FindTextBox.Text, ReplaceTextBox.Text, cmp);
-        if (newText != Editor.Text) Editor.Text = newText;
+        var needle = FindTextBox.Text;
+        if (string.IsNullOrEmpty(needle)) return;
+
+        // Use Ordinal comparisons to match FindNext/FindPrevious — the previous
+        // CurrentCulture choice meant "İ" matched differently in find vs replace-all.
+        var cmp = FindMatchCase.IsChecked == true ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
+
+        var haystack = GetEditorText();
+        var newText = haystack.Replace(needle, ReplaceTextBox.Text, cmp);
+        if (!ReferenceEquals(newText, haystack)) Editor.Text = newText;
     }
 
     private void GoToLine(int lineNumber)
