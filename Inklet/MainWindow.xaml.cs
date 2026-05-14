@@ -223,10 +223,18 @@ public sealed partial class MainWindow : Window
             AddNewTab();
         }
 
-        // Command-line file always opens in its own tab
+        // Command-line file: reuse the active tab if it is a clean untitled one,
+        // otherwise open in a new tab. Without this, the common "double-click .txt to
+        // open" flow would leave the user staring at [Untitled] [file.txt] instead of
+        // just [file.txt].
         if (!string.IsNullOrWhiteSpace(_initialFilePath))
         {
-            var session = AddNewTab();
+            TabSession session;
+            if (ActiveSession is { FilePath: null, IsModified: false } cur)
+                session = cur;
+            else
+                session = AddNewTab();
+
             await LoadFileIntoSessionAsync(session, _initialFilePath);
         }
     }
@@ -893,16 +901,27 @@ public sealed partial class MainWindow : Window
 
     private void MenuRedo_Click(object _, RoutedEventArgs _e)
     {
-        // TextBox exposes Undo() but not Redo(); simulate Ctrl+Y so the
-        // control's internal redo stack is consumed.
+        // TextBox exposes Undo() but not Redo(). Posting WM_KEYDOWN/KEYUP for Ctrl+Y
+        // directly to the focused window keeps the input scoped to our process — the
+        // previous keybd_event approach injected synthetic events into the global input
+        // queue (caught by other apps, screen readers, IME, AutoHotkey, etc.) and was
+        // marked SYSLIB1054 obsolete.
         Editor.Focus(FocusState.Programmatic);
-        const byte VK_CONTROL = 0x11;
-        const byte VK_Y = 0x59;
-        const uint KEYEVENTF_KEYUP = 0x0002;
-        keybd_event(VK_CONTROL, 0, 0, 0);
-        keybd_event(VK_Y, 0, 0, 0);
-        keybd_event(VK_Y, 0, KEYEVENTF_KEYUP, 0);
-        keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0);
+
+        var hwnd = GetFocus();
+        if (hwnd == IntPtr.Zero) return;
+
+        const uint WM_KEYDOWN = 0x0100;
+        const uint WM_KEYUP = 0x0101;
+        const int VK_CONTROL = 0x11;
+        const int VK_Y = 0x59;
+
+        // Synthesise Ctrl+Y. PostMessage queues the message rather than blocking on the
+        // window proc, matching how a real keystroke arrives.
+        PostMessage(hwnd, WM_KEYDOWN, VK_CONTROL, 0);
+        PostMessage(hwnd, WM_KEYDOWN, VK_Y, 0);
+        PostMessage(hwnd, WM_KEYUP, VK_Y, 0);
+        PostMessage(hwnd, WM_KEYUP, VK_CONTROL, 0);
     }
 
     private void MenuCut_Click(object _, RoutedEventArgs _e) => Editor.CutSelectionToClipboard();
@@ -1448,15 +1467,23 @@ public sealed partial class MainWindow : Window
     {
         if (!e.DataView.Contains(StandardDataFormats.StorageItems)) return;
         var items = await e.DataView.GetStorageItemsAsync();
-        if (items.Count > 0 && items[0] is StorageFile file)
+
+        // Open every dropped file. The first file may reuse a clean untitled tab;
+        // subsequent files always go into new tabs. Folders are skipped silently
+        // (the alternative — recursive expansion — would be a footgun for large trees).
+        bool firstFileHandled = false;
+        foreach (var item in items)
         {
-            if (ActiveSession is { FilePath: null, IsModified: false } cur)
-                await LoadFileIntoSessionAsync(cur, file.Path);
+            if (item is not StorageFile file) continue;
+
+            TabSession session;
+            if (!firstFileHandled && ActiveSession is { FilePath: null, IsModified: false } cur)
+                session = cur;
             else
-            {
-                var session = AddNewTab();
-                await LoadFileIntoSessionAsync(session, file.Path);
-            }
+                session = AddNewTab();
+
+            await LoadFileIntoSessionAsync(session, file.Path);
+            firstFileHandled = true;
         }
     }
 
@@ -1594,11 +1621,14 @@ public sealed partial class MainWindow : Window
         return lines;
     }
 
-    // Simulates a Win32 key event so that the TextBox processes redo internally.
-#pragma warning disable SYSLIB1054
-    [DllImport("user32.dll")]
-    private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, nint dwExtraInfo);
-#pragma warning restore SYSLIB1054
+    // PostMessage / GetFocus — used by MenuRedo_Click to send Ctrl+Y to the focused
+    // editor window without leaking synthetic input into the global queue.
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool PostMessage(IntPtr hWnd, uint Msg, nint wParam, nint lParam);
+
+    [LibraryImport("user32.dll")]
+    private static partial IntPtr GetFocus();
 
     #endregion
 }
