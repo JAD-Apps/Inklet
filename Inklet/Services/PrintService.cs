@@ -167,7 +167,10 @@ internal sealed class PrintService
     {
         // PrintDlgEx requires lpPageRanges to be a valid pointer (non-null) even when
         // PD_NOPAGENUMS is set. PRINTPAGERANGE is two DWORDs (nFromPage + nToPage = 8 bytes).
+        // Zero the buffer — Marshal.AllocHGlobal returns uninitialised memory and the
+        // dialog reads up to nMaxPageRanges entries.
         IntPtr pageRangeBuffer = Marshal.AllocHGlobal(8);
+        Marshal.WriteInt64(pageRangeBuffer, 0);
         try
         {
             var dlg = new PRINTDLGEX

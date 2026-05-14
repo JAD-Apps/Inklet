@@ -1278,7 +1278,10 @@ public sealed partial class MainWindow : Window
                 catch (Exception ex) { tcs.SetException(ex); }
             });
             staThread.SetApartmentState(ApartmentState.STA);
-            staThread.IsBackground = true;
+            staThread.Name = "Inklet.PrintDialog";
+            // IsBackground stays false: if the user closes the window while a print job is
+            // mid-spool, we want the spool to finish rather than being torn down with the
+            // process. The thread exits on its own once Print() returns.
             staThread.Start();
             bool printed = await tcs.Task;
 
