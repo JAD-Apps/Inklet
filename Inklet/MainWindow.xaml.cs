@@ -1654,87 +1654,36 @@ public sealed partial class MainWindow : Window
     /// </para>
     /// </summary>
     /// <summary>
-    /// Replaces the editor's content with <paramref name="text"/>. Tries three paths
-    /// in order, falling through if a path is unavailable on the current build:
+    /// Replaces the editor's content with <paramref name="text"/> via
+    /// <see cref="ITextDocument.LoadFromStream"/>. That's the documented WinUI 3 API
+    /// for loading large content — it bypasses the SetText character cap (~512 KB)
+    /// and avoids the chunked-TypeText approach which hung the UI for 30+ seconds
+    /// on a 1 MB file (16 sequential RichEdit reflows on the UI thread).
     ///
-    /// <list type="number">
-    ///   <item>
-    ///     <b>EM_SETTEXTEX direct to RichEdit HWND</b> — fastest, but only works if
-    ///     we successfully located the inner RichEdit window. Bypasses every WinUI
-    ///     layer.
-    ///   </item>
-    ///   <item>
-    ///     <b>Chunked <see cref="ITextSelection.TypeText"/></b> — appends 64 KB at
-    ///     a time at the end of the document. Each call is well under WinUI's
-    ///     one-shot SetText cap (~512 KB), so the cumulative result is the full
-    ///     document.
-    ///   </item>
-    ///   <item>
-    ///     <b>Single SetText</b> — if even chunked TypeText fails for any reason,
-    ///     fall through to <see cref="RichEditExtensions.SetPlainText"/> so the user
-    ///     at least sees something.
-    ///   </item>
-    /// </list>
-    ///
-    /// Writes a one-line diagnostic to <c>LocalState\editor-load.log</c> recording
-    /// which path was taken plus the input/output character counts — when text is
-    /// missing the user can share this file to confirm exactly where the cap struck.
+    /// <para>
+    /// We marshal the string into an in-memory random-access stream as UTF-16 LE
+    /// (which is what RichEdit's plain-text loader expects when given an unmarked
+    /// stream) and let the control's loader do the chunking internally.
+    /// </para>
     /// </summary>
     private void LoadEditorTextLarge(string text)
     {
         text ??= string.Empty;
-        LiftEditorTextLimit();
-
-        string method = "fallback";
+        string method = "stream";
         int writtenChars = 0;
         try
         {
-            if (_richEditHwnd != IntPtr.Zero)
+            using var ms = new Windows.Storage.Streams.InMemoryRandomAccessStream();
+            using (var writer = new Windows.Storage.Streams.DataWriter(ms))
             {
-                method = "win32";
-                var setTextEx = new SETTEXTEX { Flags = ST_DEFAULT, Codepage = CP_UNICODE };
-                IntPtr structPtr = Marshal.AllocHGlobal(Marshal.SizeOf<SETTEXTEX>());
-                IntPtr textPtr = Marshal.StringToHGlobalUni(text);
-                try
-                {
-                    Marshal.StructureToPtr(setTextEx, structPtr, fDeleteOld: false);
-                    SendMessage(_richEditHwnd, EM_SETTEXTEX, structPtr, textPtr);
-                }
-                finally
-                {
-                    Marshal.FreeHGlobal(structPtr);
-                    Marshal.FreeHGlobal(textPtr);
-                }
-
-                // Verify by reading the length back. If less than the input, the win32
-                // path was capped — fall through to chunked TypeText.
-                writtenChars = ReadEditorCharCount();
-                if (writtenChars >= text.Length) { LogLoad(method, text.Length, writtenChars); return; }
+                writer.UnicodeEncoding = Windows.Storage.Streams.UnicodeEncoding.Utf16LE;
+                writer.ByteOrder = Windows.Storage.Streams.ByteOrder.LittleEndian;
+                writer.WriteString(text);
+                writer.StoreAsync().AsTask().GetAwaiter().GetResult();
+                writer.DetachStream();
             }
-
-            // Chunked TypeText: clear, then append at the document end in 64 KB blocks.
-            method = "chunked";
-            Editor.Document.SetText(TextSetOptions.None, string.Empty);
-            if (text.Length > 0)
-            {
-                var sel = Editor.Document.Selection;
-                const int chunkSize = 64 * 1024;
-                int pos = 0;
-                while (pos < text.Length)
-                {
-                    int len = Math.Min(chunkSize, text.Length - pos);
-                    sel.SetRange(int.MaxValue, int.MaxValue); // move caret to end
-                    sel.TypeText(text.Substring(pos, len));
-                    pos += len;
-                }
-                sel.SetRange(0, 0); // park caret at start when done
-            }
-            writtenChars = ReadEditorCharCount();
-            if (writtenChars > 0 || text.Length == 0) { LogLoad(method, text.Length, writtenChars); return; }
-
-            // Final fallback if chunked TypeText produced nothing — at least show what fits.
-            method = "setplaintext";
-            Editor.SetPlainText(text);
+            ms.Seek(0);
+            Editor.Document.LoadFromStream(TextSetOptions.None, ms);
             writtenChars = ReadEditorCharCount();
         }
         catch (Exception ex)
