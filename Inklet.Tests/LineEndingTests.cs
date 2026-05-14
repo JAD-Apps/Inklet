@@ -180,4 +180,37 @@ public class LineEndingTests
 
         Assert.AreEqual("Hello", result);
     }
+
+    [TestMethod]
+    public void WhenAlreadyMatchesTargetThenReturnsSameInstance()
+    {
+        // The fast path should return the same string reference rather than reallocating.
+        var input = "Hello\r\nWorld\r\nTest";
+
+        var result = LineEndingDetector.Normalize(input, LineEndingStyle.CrLf);
+
+        Assert.AreSame(input, result);
+    }
+
+    [TestMethod]
+    public void WhenLargeMixedInputThenSinglePassConverts()
+    {
+        // 100 K lines of mixed endings — verifies the single-pass implementation
+        // is correct under bulk input, not just the small inline tests above.
+        var sb = new System.Text.StringBuilder();
+        for (int i = 0; i < 100_000; i++)
+        {
+            sb.Append("line").Append(i);
+            sb.Append((i % 3) switch { 0 => "\r\n", 1 => "\n", _ => "\r" });
+        }
+
+        var result = LineEndingDetector.Normalize(sb.ToString(), LineEndingStyle.Lf);
+
+        // Must contain no \r anywhere.
+        Assert.IsFalse(result.Contains('\r'));
+        // Must contain exactly 100_000 LFs.
+        int lfs = 0;
+        foreach (var c in result) if (c == '\n') lfs++;
+        Assert.AreEqual(100_000, lfs);
+    }
 }

@@ -1,4 +1,5 @@
 using System;
+using System.Text;
 
 namespace Inklet.Models;
 
@@ -116,10 +117,61 @@ public static class LineEndingDetector
             return string.Empty;
         }
 
-        // First normalize everything to \n, then convert to target
-        var normalized = text.Replace("\r\n", "\n").Replace("\r", "\n");
+        // Single-pass implementation: scan once, emit the target line-ending whenever
+        // we see CRLF, bare CR, or bare LF. The previous implementation did
+        //   text.Replace("\r\n", "\n").Replace("\r", "\n").Replace("\n", target)
+        // which allocated up to three intermediate strings each ~size of the input.
+        // For a 50 MB save that was ~150 MB of transient garbage.
+
         var target = GetLineEndingString(targetStyle);
 
-        return target == "\n" ? normalized : normalized.Replace("\n", target);
+        // Fast paths: if the input already matches the target style throughout, return
+        // it unchanged. We need a quick scan to confirm — bail at the first stray ending.
+        if (AlreadyMatches(text, targetStyle))
+            return text;
+
+        // Pre-size the builder to the input length plus a small headroom. CRLF→LF/CR
+        // shrinks the string; LF/CR→CRLF grows it by at most one char per line.
+        var sb = new StringBuilder(text.Length + 16);
+        for (int i = 0; i < text.Length; i++)
+        {
+            char c = text[i];
+            if (c == '\r')
+            {
+                if (i + 1 < text.Length && text[i + 1] == '\n')
+                    i++; // consume the LF half of CRLF
+                sb.Append(target);
+            }
+            else if (c == '\n')
+            {
+                sb.Append(target);
+            }
+            else
+            {
+                sb.Append(c);
+            }
+        }
+        return sb.ToString();
+    }
+
+    private static bool AlreadyMatches(string text, LineEndingStyle target)
+    {
+        for (int i = 0; i < text.Length; i++)
+        {
+            char c = text[i];
+            if (c == '\r')
+            {
+                bool isCrLf = i + 1 < text.Length && text[i + 1] == '\n';
+                if (target == LineEndingStyle.CrLf && !isCrLf) return false;
+                if (target == LineEndingStyle.Cr && isCrLf) return false;
+                if (target == LineEndingStyle.Lf) return false;
+                if (isCrLf) i++;
+            }
+            else if (c == '\n')
+            {
+                if (target != LineEndingStyle.Lf) return false;
+            }
+        }
+        return true;
     }
 }
