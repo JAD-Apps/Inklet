@@ -393,13 +393,10 @@ public sealed partial class MainWindow : Window
     {
         if (tvi.Tag is not TabSession session) return;
 
-        // Lift the RichEdit text limit before assignment. session.Content may be the
-        // full text of a multi-MB file restored from the session; without this the
-        // tab switch would truncate it at ~512 KB.
-        LiftEditorTextLimit();
-
         _suppressTextChanged = true;
-        Editor.SetPlainText(session.Content);
+        // session.Content may be a multi-MB file restored from the session — go through
+        // the Win32 path which bypasses WinUI's silent ~512 KB SetText truncation.
+        LoadEditorTextLarge(session.Content);
         Editor.SetSelectionStart(Math.Min(session.CursorPosition, session.Content.Length));
         Editor.SetSelectionLength(0);
         _suppressTextChanged = false;
@@ -413,7 +410,9 @@ public sealed partial class MainWindow : Window
     private void SaveCurrentTabState()
     {
         if (ActiveSession is not { } session) return;
-        session.Content = Editor.GetPlainText();
+        // Use the Win32 read so we don't lose chars beyond the WinUI ~512 KB cap
+        // when capturing a large file's content for save / autosave.
+        session.Content = GetEditorTextLarge();
         session.CursorPosition = Editor.GetSelectionStart();
     }
 
@@ -531,7 +530,8 @@ public sealed partial class MainWindow : Window
         {
             if (removed.Tag is TabSession old)
             {
-                old.Content = Editor.GetPlainText();
+                // Win32 read — see SaveCurrentTabState for the cap reasoning.
+                old.Content = GetEditorTextLarge();
                 old.CursorPosition = Editor.GetSelectionStart();
             }
         }
@@ -906,14 +906,10 @@ public sealed partial class MainWindow : Window
             // Only update the editor if this session is active
             if (ActiveSession == session)
             {
-                // Lift the RichEdit text limit RIGHT BEFORE assigning. The Loaded
-                // handler also does this, but on first launch the inner RichEdit HWND
-                // can be unavailable at Loaded time — by the moment a file is being
-                // assigned, the HWND is reliably present.
-                LiftEditorTextLimit();
-
                 _suppressTextChanged = true;
-                Editor.SetPlainText(content);
+                // Use the Win32 path so WinUI's TextDocument.SetText doesn't truncate
+                // large files at ~512 KB.
+                LoadEditorTextLarge(content);
                 _suppressTextChanged = false;
                 UpdateTitle(session);
                 UpdateStatusBar(session);
@@ -1072,8 +1068,8 @@ public sealed partial class MainWindow : Window
         if (Editor.GetSelectionLength() > 0)
         {
             var start = Editor.GetSelectionStart();
-            var text = Editor.GetPlainText();
-            Editor.SetPlainText(string.Concat(text.AsSpan(0, start), text.AsSpan(start + Editor.GetSelectionLength())));
+            var text = GetEditorTextLarge();
+            LoadEditorTextLarge(string.Concat(text.AsSpan(0, start), text.AsSpan(start + Editor.GetSelectionLength())));
             Editor.SetSelectionStart(start);
         }
     }
@@ -1082,8 +1078,8 @@ public sealed partial class MainWindow : Window
     {
         var timeDate = DateTime.Now.ToString("h:mm tt M/d/yyyy");
         var start = Editor.GetSelectionStart();
-        var text = Editor.GetPlainText();
-        Editor.SetPlainText(string.Concat(
+        var text = GetEditorTextLarge();
+        LoadEditorTextLarge(string.Concat(
             text.AsSpan(0, start),
             timeDate,
             text.AsSpan(start + Editor.GetSelectionLength())));
@@ -1158,7 +1154,7 @@ public sealed partial class MainWindow : Window
     /// so reusing it avoids a second materialisation per find op.
     /// </summary>
     private string GetEditorText()
-        => ActiveSession?.Content ?? Editor.GetPlainText();
+        => ActiveSession?.Content ?? GetEditorTextLarge();
 
     private void FindNext()
     {
@@ -1208,7 +1204,7 @@ public sealed partial class MainWindow : Window
         {
             var start = Editor.GetSelectionStart();
             var t = GetEditorText();
-            Editor.SetPlainText(string.Concat(t.AsSpan(0, start), ReplaceTextBox.Text, t.AsSpan(start + Editor.GetSelectionLength())));
+            LoadEditorTextLarge(string.Concat(t.AsSpan(0, start), ReplaceTextBox.Text, t.AsSpan(start + Editor.GetSelectionLength())));
             Editor.SetSelectionStart(start + ReplaceTextBox.Text.Length);
         }
         FindNext();
@@ -1225,7 +1221,7 @@ public sealed partial class MainWindow : Window
 
         var haystack = GetEditorText();
         var newText = haystack.Replace(needle, ReplaceTextBox.Text, cmp);
-        if (!ReferenceEquals(newText, haystack)) Editor.SetPlainText(newText);
+        if (!ReferenceEquals(newText, haystack)) LoadEditorTextLarge(newText);
     }
 
     private void GoToLine(int lineNumber)
@@ -1430,7 +1426,8 @@ public sealed partial class MainWindow : Window
         var session = ActiveSession;
         if (session is null) return;
 
-        var text = Editor.GetPlainText();
+        // Win32 read so a multi-MB document prints in full, not just the first 512 KB.
+        var text = GetEditorTextLarge();
         var fileName = session.FilePath ?? "Untitled";
         var setup = LoadPrintPageSettings();
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
@@ -1597,8 +1594,40 @@ public sealed partial class MainWindow : Window
 
     #region Editor Events
 
-    private const uint EM_EXLIMITTEXT = 0x0435;
-    private const uint EM_GETLIMITTEXT = 0x00D5;
+    private const uint EM_EXLIMITTEXT      = 0x0435;
+    private const uint EM_GETLIMITTEXT     = 0x00D5;
+    private const uint EM_SETTEXTEX        = 0x0461;
+    private const uint EM_GETTEXTEX        = 0x045E;
+    private const uint EM_GETTEXTLENGTHEX  = 0x045F;
+    private const uint ST_DEFAULT          = 0x0;
+    private const uint GT_DEFAULT          = 0x0;
+    private const uint GTL_DEFAULT         = 0x0;
+    private const uint GTL_NUMCHARS        = 0x08;
+    private const uint CP_UNICODE          = 1200;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SETTEXTEX
+    {
+        public uint Flags;
+        public uint Codepage;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct GETTEXTEX
+    {
+        public int CbCh;
+        public uint Flags;
+        public uint Codepage;
+        public IntPtr LpDefaultChar;
+        public IntPtr LpUsedDefChar;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct GETTEXTLENGTHEX
+    {
+        public uint Flags;
+        public uint Codepage;
+    }
 
     // Cached after first successful lookup so we don't rescan the visual tree on
     // every text load. Reset to Zero if a future SendMessage fails to retain the limit.
@@ -1610,6 +1639,104 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private void Editor_Loaded(object _, RoutedEventArgs _e)
         => LiftEditorTextLimit();
+
+    /// <summary>
+    /// Loads <paramref name="text"/> into the editor, bypassing WinUI's
+    /// <c>TextDocument.SetText</c> for any non-trivial size. WinUI's path silently
+    /// truncates the input around ~524288 characters before it reaches the underlying
+    /// RichEdit (EM_EXLIMITTEXT alone doesn't help — the cap lives in the WinUI layer,
+    /// not the control). We send <c>EM_SETTEXTEX</c> directly to the RichEdit HWND
+    /// instead, marshalled as a UTF-16 string with no codepage conversion.
+    ///
+    /// <para>
+    /// Falls back to <see cref="RichEditExtensions.SetPlainText"/> if the HWND lookup
+    /// fails — that path will at least show the truncated content rather than nothing.
+    /// </para>
+    /// </summary>
+    private void LoadEditorTextLarge(string text)
+    {
+        text ??= string.Empty;
+
+        // Make sure the RichEdit byte cap is lifted before we shove a megabyte at it.
+        LiftEditorTextLimit();
+
+        if (_richEditHwnd == IntPtr.Zero)
+        {
+            // No HWND available — fall back to the WinUI path. Will truncate at ~512 KB
+            // but at least renders something.
+            Editor.SetPlainText(text);
+            return;
+        }
+
+        var setTextEx = new SETTEXTEX { Flags = ST_DEFAULT, Codepage = CP_UNICODE };
+        IntPtr structPtr = Marshal.AllocHGlobal(Marshal.SizeOf<SETTEXTEX>());
+        IntPtr textPtr = Marshal.StringToHGlobalUni(text);
+        try
+        {
+            Marshal.StructureToPtr(setTextEx, structPtr, fDeleteOld: false);
+            SendMessage(_richEditHwnd, EM_SETTEXTEX, structPtr, textPtr);
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(structPtr);
+            Marshal.FreeHGlobal(textPtr);
+        }
+    }
+
+    /// <summary>
+    /// Reads the editor's content via <c>EM_GETTEXTEX</c> directly on the RichEdit HWND.
+    /// WinUI's <see cref="ITextDocument.GetText"/> caps reads at the same ~512 KB
+    /// boundary as its setter — so for any reasonably large document we'd lose data
+    /// on the round-trip from on-disk → editor → on-disk if we used the WinUI path.
+    ///
+    /// <para>
+    /// Falls back to the WinUI path if the HWND lookup hasn't succeeded yet — at
+    /// startup before the editor is loaded that may still be the case.
+    /// </para>
+    /// </summary>
+    private string GetEditorTextLarge()
+    {
+        if (_richEditHwnd == IntPtr.Zero)
+            return Editor.GetPlainText();
+
+        // Ask the control how many UTF-16 chars it currently holds.
+        var lengthEx = new GETTEXTLENGTHEX { Flags = GTL_DEFAULT | GTL_NUMCHARS, Codepage = CP_UNICODE };
+        IntPtr lenPtr = Marshal.AllocHGlobal(Marshal.SizeOf<GETTEXTLENGTHEX>());
+        IntPtr bufPtr = IntPtr.Zero;
+        try
+        {
+            Marshal.StructureToPtr(lengthEx, lenPtr, fDeleteOld: false);
+            int charCount = SendMessage(_richEditHwnd, EM_GETTEXTLENGTHEX, lenPtr, IntPtr.Zero).ToInt32();
+            if (charCount <= 0) return string.Empty;
+
+            // EM_GETTEXTEX wants the destination buffer size in BYTES including the
+            // terminating null. Add one char for the null and double for UTF-16.
+            int bufBytes = (charCount + 1) * sizeof(char);
+            bufPtr = Marshal.AllocHGlobal(bufBytes);
+
+            var getTextEx = new GETTEXTEX
+            {
+                CbCh = bufBytes,
+                Flags = GT_DEFAULT,
+                Codepage = CP_UNICODE,
+                LpDefaultChar = IntPtr.Zero,
+                LpUsedDefChar = IntPtr.Zero,
+            };
+            IntPtr getPtr = Marshal.AllocHGlobal(Marshal.SizeOf<GETTEXTEX>());
+            try
+            {
+                Marshal.StructureToPtr(getTextEx, getPtr, fDeleteOld: false);
+                int written = SendMessage(_richEditHwnd, EM_GETTEXTEX, getPtr, bufPtr).ToInt32();
+                return written > 0 ? Marshal.PtrToStringUni(bufPtr, written) ?? string.Empty : string.Empty;
+            }
+            finally { Marshal.FreeHGlobal(getPtr); }
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(lenPtr);
+            if (bufPtr != IntPtr.Zero) Marshal.FreeHGlobal(bufPtr);
+        }
+    }
 
     /// <summary>
     /// Locates the inner RichEdit HWND (if not already cached) and sends EM_EXLIMITTEXT
@@ -1691,7 +1818,10 @@ public sealed partial class MainWindow : Window
         if (ActiveSession is not { } session) return;
 
         bool wasDirty = session.IsModified;
-        session.Content = Editor.GetPlainText();
+        // Win32 read per keystroke. The marshalling cost is microseconds; the WinUI
+        // GetText path would silently truncate at ~512 KB and discard everything the
+        // user has typed past that boundary.
+        session.Content = GetEditorTextLarge();
 
         // Tab header / title bar only need refreshing when the dirty state actually
         // flips. This is the per-keystroke hot path â€” RefreshTabHeader iterates all
