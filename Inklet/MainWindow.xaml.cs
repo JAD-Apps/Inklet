@@ -393,6 +393,11 @@ public sealed partial class MainWindow : Window
     {
         if (tvi.Tag is not TabSession session) return;
 
+        // Lift the RichEdit text limit before assignment. session.Content may be the
+        // full text of a multi-MB file restored from the session; without this the
+        // tab switch would truncate it at ~512 KB.
+        LiftEditorTextLimit();
+
         _suppressTextChanged = true;
         Editor.SetPlainText(session.Content);
         Editor.SetSelectionStart(Math.Min(session.CursorPosition, session.Content.Length));
@@ -901,6 +906,12 @@ public sealed partial class MainWindow : Window
             // Only update the editor if this session is active
             if (ActiveSession == session)
             {
+                // Lift the RichEdit text limit RIGHT BEFORE assigning. The Loaded
+                // handler also does this, but on first launch the inner RichEdit HWND
+                // can be unavailable at Loaded time — by the moment a file is being
+                // assigned, the HWND is reliably present.
+                LiftEditorTextLimit();
+
                 _suppressTextChanged = true;
                 Editor.SetPlainText(content);
                 _suppressTextChanged = false;
@@ -1586,31 +1597,57 @@ public sealed partial class MainWindow : Window
 
     #region Editor Events
 
+    private const uint EM_EXLIMITTEXT = 0x0435;
+    private const uint EM_GETLIMITTEXT = 0x00D5;
+
+    // Cached after first successful lookup so we don't rescan the visual tree on
+    // every text load. Reset to Zero if a future SendMessage fails to retain the limit.
+    private IntPtr _richEditHwnd;
+
     /// <summary>
     /// Once the RichEditBox has been laid out and its inner RichEdit HWND has been
-    /// created, send EM_EXLIMITTEXT to remove the default ~512 KB text cap. Without
-    /// this, opening any file larger than half a megabyte renders only the leading
-    /// portion silently — see PR #44.
+    /// created, send EM_EXLIMITTEXT to remove the default ~512 KB text cap.
     /// </summary>
     private void Editor_Loaded(object _, RoutedEventArgs _e)
+        => LiftEditorTextLimit();
+
+    /// <summary>
+    /// Locates the inner RichEdit HWND (if not already cached) and sends EM_EXLIMITTEXT
+    /// to lift the default 524288-character text cap. Verifies the limit was applied by
+    /// reading it back via EM_GETLIMITTEXT — if the verification fails, the cached HWND
+    /// is invalidated so the next call retries the scan.
+    ///
+    /// <para>
+    /// Called both on Editor.Loaded and again immediately before each large text load,
+    /// because some XAML island timing makes the RichEdit HWND unavailable at first
+    /// Loaded — by the time a file is being loaded the HWND is reliably present.
+    /// </para>
+    /// </summary>
+    private void LiftEditorTextLimit()
     {
         try
         {
-            var richEditHwnd = FindRichEditHwnd();
-            if (richEditHwnd == IntPtr.Zero) return;
+            if (_richEditHwnd == IntPtr.Zero)
+                _richEditHwnd = FindRichEditHwnd();
+            if (_richEditHwnd == IntPtr.Zero) return;
 
-            // EM_EXLIMITTEXT with int.MaxValue lifts the cap to the maximum the control
-            // supports (~2 GB for plain text in modern RichEdit). The setting persists
-            // for the control's lifetime, so once-per-load is enough.
-            const uint EM_EXLIMITTEXT = 0x0435;
-            SendMessage(richEditHwnd, EM_EXLIMITTEXT, IntPtr.Zero, (IntPtr)int.MaxValue);
+            SendMessage(_richEditHwnd, EM_EXLIMITTEXT, IntPtr.Zero, (IntPtr)int.MaxValue);
+
+            // Verify — if the control doesn't echo back our int.MaxValue, drop the
+            // cached HWND so the next attempt rescans (we may have grabbed the wrong
+            // window class).
+            var actual = SendMessage(_richEditHwnd, EM_GETLIMITTEXT, IntPtr.Zero, IntPtr.Zero).ToInt64();
+            if (actual < 1_000_000)
+                _richEditHwnd = IntPtr.Zero;
         }
-        catch (Exception ex) { Debug.WriteLine($"Editor_Loaded EM_EXLIMITTEXT failed: {ex.Message}"); }
+        catch (Exception ex) { Debug.WriteLine($"LiftEditorTextLimit failed: {ex.Message}"); }
     }
 
     /// <summary>
-    /// Walks the main window's child window tree looking for the RichEdit control
-    /// hosted inside the WinUI 3 RichEditBox. Returns IntPtr.Zero if not found.
+    /// Walks the main window's descendants and aggressively bumps the text limit on
+    /// any child window whose class name looks like an Edit/RichEdit. Returns the
+    /// first one whose limit successfully reads back as the new max — that's the
+    /// HWND we'll cache for subsequent text loads.
     /// </summary>
     private IntPtr FindRichEditHwnd()
     {
@@ -1621,21 +1658,29 @@ public sealed partial class MainWindow : Window
         {
             var buf = new char[256];
             int len = GetClassName(h, buf, buf.Length);
-            if (len > 0)
+            if (len <= 0) return true;
+            var cls = new string(buf, 0, len);
+
+            // Try EM_EXLIMITTEXT on anything that looks like an edit-style control.
+            // Known WinUI 3 / Win32 RichEdit classes: RICHEDIT50W, RICHEDIT60W, RichEdit50W,
+            // and the bare 'Edit' class. EM_EXLIMITTEXT is harmless on non-edit controls
+            // (they just ignore the message).
+            if (cls.IndexOf("EDIT", StringComparison.OrdinalIgnoreCase) >= 0)
             {
-                var cls = new string(buf, 0, len);
-                // Modern RichEdit class is RICHEDIT50W; older variants RICHEDIT20W/A.
-                if (cls.StartsWith("RICHEDIT", StringComparison.OrdinalIgnoreCase))
+                SendMessage(h, EM_EXLIMITTEXT, IntPtr.Zero, (IntPtr)int.MaxValue);
+                var actual = SendMessage(h, EM_GETLIMITTEXT, IntPtr.Zero, IntPtr.Zero).ToInt64();
+                if (actual >= 1_000_000 && found == IntPtr.Zero)
                 {
                     found = h;
-                    return false; // stop enumeration
+                    // Don't stop — keep walking and bumping any other edit-class HWNDs
+                    // we find too. The cache only stores the first, but the limit gets
+                    // raised on all of them so whichever one Document.SetText routes to
+                    // is unrestricted.
                 }
             }
             return true;
         }
 
-        // EnumChildWindows recurses through descendants implicitly; the RichEdit is
-        // several layers deep inside the XAML island host hierarchy.
         EnumChildWindows(mainHwnd, Callback, IntPtr.Zero);
         return found;
     }
