@@ -142,6 +142,23 @@ public class FileServiceTests
     }
 
     [TestMethod]
+    public async Task WhenWriteBareCrContentThenEmitsDetectedEnding()
+    {
+        // The editor holds text in RichEdit's bare-CR convention; the save path must
+        // re-expand those bare CRs to the document's detected ending. This guards the
+        // integrity invariant behind the in-memory bare-CR model.
+        var filePath = Path.Combine(_testDir, "bare_cr.txt");
+
+        await FileService.WriteFileAsync(filePath, "Line1\rLine2\rLine3", Encoding.UTF8, false, LineEndingStyle.CrLf);
+        var asCrLf = await File.ReadAllTextAsync(filePath);
+        Assert.AreEqual("Line1\r\nLine2\r\nLine3", asCrLf);
+
+        await FileService.WriteFileAsync(filePath, "Line1\rLine2\rLine3", Encoding.UTF8, false, LineEndingStyle.Lf);
+        var asLf = await File.ReadAllTextAsync(filePath);
+        Assert.AreEqual("Line1\nLine2\nLine3", asLf);
+    }
+
+    [TestMethod]
     public async Task WhenReadEmptyFileThenReturnsEmptyString()
     {
         var filePath = Path.Combine(_testDir, "empty.txt");
