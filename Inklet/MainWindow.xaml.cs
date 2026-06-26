@@ -1078,8 +1078,6 @@ public sealed partial class MainWindow : Window
 
     private void MenuRedo_Click(object _, RoutedEventArgs _e)
     {
-        // RichEditBox exposes Document.Redo() directly — much cleaner than the
-        // PostMessage/keybd_event dance the TextBox-era code needed.
         Editor.Focus(FocusState.Programmatic);
         Editor.DocumentRedo();
     }

@@ -179,7 +179,7 @@ internal sealed partial class TextEditorControl : UserControl
         _canvas.Invalidate();
     }
 
-    public new void Focus() => Focus(FocusState.Programmatic);
+    public void Focus() => Focus(FocusState.Programmatic);
 
     // ── Editing ──────────────────────────────────────────────────────────────
 

@@ -54,10 +54,12 @@ Inklet faithfully recreates the classic Windows 10 Notepad experience with moder
 
 ### Performance
 - Instant startup
-- Documents of any length — files load through the RichEdit streaming path with no character cap, and the full text is shown (never silently truncated)
+- Documents of any length — a custom Win2D editor draws only the lines visible in the viewport, so files of any size display in full and stay responsive (the built-in WinUI text controls stop rendering large documents)
 - Responsive typing in large files — the editor never re-serialises the whole document on a keystroke; the cached copy is refreshed only when needed (save, find, go to)
 - Minimal memory footprint
-- Mica backdrop for modern appearance without overhead
+- Mica backdrop behind the title bar and tabs
+
+> Not yet implemented on the new editor surface: word wrap, IME input, and screen-reader accessibility — planned follow-ups.
 
 ### File Associations
 - Registers as an "Open With" handler for common text formats: `.txt`, `.log`, `.ini`, `.cfg`, `.md`, `.xml`, `.json`, `.csv`, `.yaml`, `.yml`

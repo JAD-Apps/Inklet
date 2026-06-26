@@ -7,12 +7,16 @@ All notable changes to Inklet are documented in this file.
 ## [1.0.7] - 2026-06-26
 
 ### Fixed
-- Large documents rendered only the first portion visibly — everything past a certain point was drawn in the same colour as the Mica backdrop and so was invisible. `RichEditBox` loads content via `ITextDocument.LoadFromStream`, which resets RichEdit's character formatting to its internal `CFE_AUTOCOLOR` default rather than the WinUI `Foreground` brush; the auto colour matched the background. The editor now re-stamps an explicit themed foreground colour across the whole document after every load (and on light/dark theme switch), so the entire file is always visible regardless of length.
-- Find, Go To and the Ln/Col status drifted on multi-line documents. The cached text was held with CRLF line breaks while RichEdit counts caret/selection positions with a single `\r` per break, so the two offset spaces diverged by one per preceding newline. In-memory text is now kept in the editor's own bare-CR convention, so all three share one offset space with the control. Files still save with their detected line ending (CRLF/LF/CR).
+- **Large documents were partly invisible.** Past roughly 512 KB the text rendered in the background colour and could not be seen — the reported bug. The root cause is that the WinUI 3 `RichEditBox` stops painting glyphs beyond a few hundred KB (the text is still loaded and selectable, but not drawn), and no colour/limit workaround overcomes it. A hosted native Win32 edit control renders large files but WinUI's composition occludes child HWNDs (the "airspace" problem). Both were verified by running the app and screenshotting deep lines. The editor surface has therefore been **replaced with a custom Win2D control** (`Editor/TextEditorControl.cs`) that draws only the lines visible in the viewport. It is a real XAML element (composes correctly, no airspace) and virtualises rendering, so it displays and edits documents of **any length** while staying fast. Verified on a 4 MB / 60,000-line file: it renders line 60,000, navigation/Find/Go To reach it, and saving preserves the file's line endings.
+- Find, Go To and the Ln/Col status drifted on multi-line documents because the cached text used CRLF line breaks while the control counted caret positions with one unit per break. In-memory text is now held with a single LF convention shared by the editor, Find and Go To; files still save with their detected line ending (CRLF/LF/CR).
 - Switching away from, or autosaving, an unmodified tab silently marked it as modified (a stray `*` and an unnecessary save prompt on close). The tab state is now only re-read from the editor when an actual edit is pending.
 
 ### Changed
-- Typing in large files is no longer laggy: the editor previously serialised the entire document to a stream on every keystroke to refresh the cached copy and dirty flag. It now flips an O(1) dirty flag and reads the caret line/column directly from the control, materialising the full text only on demand (save, find, go to, tab switch). Removed the per-load diagnostic logging added while chasing the truncation bug.
+- Typing in large files is no longer laggy: the editor no longer serialises the whole document on every keystroke. It flips an O(1) dirty flag, reads the caret line/column straight from the control, and materialises the full text only on demand (save, find, go to, tab switch).
+- The editor area is now an opaque solid surface (like Notepad's edit area) rather than floating over the Mica backdrop. Mica remains behind the title bar and tabs.
+
+### Known limitations
+- Word wrap, IME (East-Asian composition) and screen-reader (UIA) accessibility are not yet implemented on the new editor surface and are planned follow-ups.
 
 ---
 
