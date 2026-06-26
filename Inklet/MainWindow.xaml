@@ -275,7 +275,7 @@
         </Grid>
 
         <!-- Editor + Find bar -->
-        <Grid Grid.Row="1">
+        <Grid Grid.Row="1" x:Name="EditorArea">
             <!--
                 RichEditBox (rather than TextBox) because WinUI 3's TextBox silently
                 truncates content at ~524288 characters. RichEditBox routes through

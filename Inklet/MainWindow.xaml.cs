@@ -310,6 +310,35 @@ public sealed partial class MainWindow : Window
         // and the absence is jarring â€” without focus the first keystroke is lost. We
         // defer to the dispatcher so the focus call runs after the current layout pass.
         DispatcherQueue.TryEnqueue(() => Editor.Focus(FocusState.Programmatic));
+
+        // Phase 1 PoC: overlay the Win2D virtualised editor and load the file into it,
+        // to verify it renders deep content correctly (and composes without airspace).
+        DispatcherQueue.TryEnqueue(SetupCanvasEditorPoc);
+    }
+
+    private Inklet.Editor.TextEditorControl? _canvasEditor;
+
+    private void SetupCanvasEditorPoc()
+    {
+        try
+        {
+            _canvasEditor = new Inklet.Editor.TextEditorControl();
+            Grid.SetRow(_canvasEditor, 0); // same cell as the RichEditBox
+            EditorArea.Children.Add(_canvasEditor); // added last -> on top
+            _canvasEditor.SetColors(Colors.White, Windows.UI.Color.FromArgb(255, 0x20, 0x20, 0x20),
+                Windows.UI.Color.FromArgb(0x80, 0x33, 0x99, 0xFF));
+            _canvasEditor.SetFont("Consolas", 14f, false, false);
+            Editor.Visibility = Visibility.Collapsed;
+
+            if (!string.IsNullOrWhiteSpace(_initialFilePath) && File.Exists(_initialFilePath))
+            {
+                var (content, _) = FileService.ReadFileAsync(_initialFilePath).GetAwaiter().GetResult();
+                _canvasEditor.SetText(content);
+                Debug.WriteLine($"Canvas PoC loaded {content.Length} chars, {_canvasEditor.LineCount} lines");
+            }
+            DispatcherQueue.TryEnqueue(() => _canvasEditor?.Focus());
+        }
+        catch (Exception ex) { Debug.WriteLine($"Canvas PoC failed: {ex.Message}"); }
     }
 
     private void ResizeWindow(int width, int height)
