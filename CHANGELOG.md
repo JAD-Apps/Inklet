@@ -8,6 +8,11 @@ All notable changes to Inklet are documented in this file.
 
 ### Fixed
 - Large documents rendered only the first portion visibly — everything past a certain point was drawn in the same colour as the Mica backdrop and so was invisible. `RichEditBox` loads content via `ITextDocument.LoadFromStream`, which resets RichEdit's character formatting to its internal `CFE_AUTOCOLOR` default rather than the WinUI `Foreground` brush; the auto colour matched the background. The editor now re-stamps an explicit themed foreground colour across the whole document after every load (and on light/dark theme switch), so the entire file is always visible regardless of length.
+- Find, Go To and the Ln/Col status drifted on multi-line documents. The cached text was held with CRLF line breaks while RichEdit counts caret/selection positions with a single `\r` per break, so the two offset spaces diverged by one per preceding newline. In-memory text is now kept in the editor's own bare-CR convention, so all three share one offset space with the control. Files still save with their detected line ending (CRLF/LF/CR).
+- Switching away from, or autosaving, an unmodified tab silently marked it as modified (a stray `*` and an unnecessary save prompt on close). The tab state is now only re-read from the editor when an actual edit is pending.
+
+### Changed
+- Typing in large files is no longer laggy: the editor previously serialised the entire document to a stream on every keystroke to refresh the cached copy and dirty flag. It now flips an O(1) dirty flag and reads the caret line/column directly from the control, materialising the full text only on demand (save, find, go to, tab switch). Removed the per-load diagnostic logging added while chasing the truncation bug.
 
 ---
 

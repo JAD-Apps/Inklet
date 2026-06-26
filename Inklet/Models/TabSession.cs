@@ -110,6 +110,14 @@ public sealed class TabSession
     public bool IsModified => _isDirty;
 
     /// <summary>
+    /// Flags the tab dirty without re-reading the editor buffer. Used on the
+    /// per-keystroke hot path, where materialising the whole document just to flip the
+    /// dirty flag would be wasteful; the live text is pulled into <see cref="Content"/>
+    /// on demand (e.g. on save, find, or tab switch).
+    /// </summary>
+    public void MarkDirty() => _isDirty = true;
+
+    /// <summary>
     /// Marks the current content as saved. Use this after a successful write rather
     /// than assigning <c>SavedContent = Content</c> — the former is intent-revealing
     /// and the latter requires the caller to know the dirty flag will reset because

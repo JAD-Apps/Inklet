@@ -153,6 +153,35 @@ public class SessionTests
     }
 
     [TestMethod]
+    public void WhenMarkDirtyThenIsModifiedTrue()
+    {
+        // MarkDirty is the per-keystroke hot path: it flips the dirty flag without
+        // re-reading the editor buffer (the live text is pulled into Content later).
+        var session = new TabSession();
+
+        session.MarkDirty();
+
+        Assert.IsTrue(session.IsModified);
+        Assert.AreEqual("*Untitled", session.TabTitle);
+    }
+
+    [TestMethod]
+    public void WhenMarkDirtyThenMarkSavedClearsIt()
+    {
+        var session = new TabSession { Content = "v1" };
+        session.MarkSaved();
+        Assert.IsFalse(session.IsModified);
+
+        session.MarkDirty();
+        Assert.IsTrue(session.IsModified);
+
+        // A later content sync + save round-trips the dirty flag back to clean.
+        session.Content = "v2";
+        session.MarkSaved();
+        Assert.IsFalse(session.IsModified);
+    }
+
+    [TestMethod]
     public void WhenSameReferenceAssignedThenNoSpuriousDirty()
     {
         var session = new TabSession();

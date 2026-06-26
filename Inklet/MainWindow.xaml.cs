@@ -403,6 +403,8 @@ public sealed partial class MainWindow : Window
         Editor.SetSelectionStart(Math.Min(session.CursorPosition, session.Content.Length));
         Editor.SetSelectionLength(0);
         _suppressTextChanged = false;
+        // The editor now mirrors session.Content; nothing pending to pull back.
+        _activeContentDirty = false;
 
         Editor.TextWrapping = _settings.WordWrap ? TextWrapping.Wrap : TextWrapping.NoWrap;
         UpdateTitle(session);
@@ -413,9 +415,16 @@ public sealed partial class MainWindow : Window
     private void SaveCurrentTabState()
     {
         if (ActiveSession is not { } session) return;
-        // Use the Win32 read so we don't lose chars beyond the WinUI ~512 KB cap
-        // when capturing a large file's content for save / autosave.
-        session.Content = GetEditorTextLarge();
+        // Only re-read the editor when a keystroke actually left Content stale. Reading
+        // unconditionally would hand the Content setter a fresh string reference and
+        // flip a clean tab to "modified" on every autosave / tab switch (a latent bug
+        // in the previous always-read code). The stream read bypasses WinUI's ~512 KB
+        // GetText cap for large files.
+        if (_activeContentDirty)
+        {
+            session.Content = GetEditorTextLarge();
+            _activeContentDirty = false;
+        }
         session.CursorPosition = Editor.GetSelectionStart();
     }
 
@@ -528,13 +537,17 @@ public sealed partial class MainWindow : Window
 
     private void TabStrip_SelectionChanged(object _, SelectionChangedEventArgs e)
     {
-        // Persist state leaving the old tab
+        // Persist state leaving the old tab. Only pull its text back if a keystroke left
+        // it stale (otherwise a clean tab would be flipped to "modified" by the re-read).
         foreach (var removed in e.RemovedItems.OfType<TabViewItem>())
         {
             if (removed.Tag is TabSession old)
             {
-                // Win32 read — see SaveCurrentTabState for the cap reasoning.
-                old.Content = GetEditorTextLarge();
+                if (_activeContentDirty)
+                {
+                    old.Content = GetEditorTextLarge();
+                    _activeContentDirty = false;
+                }
                 old.CursorPosition = Editor.GetSelectionStart();
             }
         }
@@ -983,6 +996,9 @@ public sealed partial class MainWindow : Window
 
     private async Task<bool> SaveSessionAsync(TabSession session)
     {
+        // Pull any un-synced keystrokes into Content before writing it to disk.
+        EnsureActiveContentSynced();
+
         if (session.FilePath is null) return await SaveAsSessionAsync(session);
 
         try
@@ -1016,6 +1032,9 @@ public sealed partial class MainWindow : Window
 
     private async Task<bool> SaveAsSessionAsync(TabSession session)
     {
+        // Pull any un-synced keystrokes into Content before writing it to disk.
+        EnsureActiveContentSynced();
+
         var picker = new FileSavePicker();
         InitializeWithWindow(picker);
         picker.SuggestedStartLocation = PickerLocationId.DocumentsLibrary;
@@ -1104,6 +1123,9 @@ public sealed partial class MainWindow : Window
 
     private async void MenuGoTo_Click(object _, RoutedEventArgs _e)
     {
+        // Refresh the cached buffer so the line index (and the line count shown in the
+        // prompt) reflects any un-synced keystrokes.
+        EnsureActiveContentSynced();
         var lineCount = ActiveSession?.Lines.LineCount ?? 1;
         var input = new TextBox { PlaceholderText = $"Line number (1-{lineCount})" };
         var dialog = new ContentDialog
@@ -1155,13 +1177,15 @@ public sealed partial class MainWindow : Window
     private void FindPrev_Click(object _, RoutedEventArgs _e) => FindPrevious();
 
     /// <summary>
-    /// Returns the editor's text via the cached snapshot on the active session.
-    /// Editor.GetPlainText() round-trips through TextDocument and materialises a fresh string on every
-    /// access â€” we already keep a reference on the active TabSession via Editor_TextChanged,
-    /// so reusing it avoids a second materialisation per find op.
+    /// Returns the editor's text for Find/Replace. Syncs the active session's cached
+    /// Content first (cheap no-op unless a keystroke left it stale), so searches run
+    /// against the current text without re-materialising it on every keystroke.
     /// </summary>
     private string GetEditorText()
-        => ActiveSession?.Content ?? GetEditorTextLarge();
+    {
+        EnsureActiveContentSynced();
+        return ActiveSession?.Content ?? GetEditorTextLarge();
+    }
 
     private void FindNext()
     {
@@ -1601,44 +1625,22 @@ public sealed partial class MainWindow : Window
 
     #region Editor Events
 
-    private const uint EM_EXLIMITTEXT      = 0x0435;
-    private const uint EM_GETLIMITTEXT     = 0x00D5;
-    private const uint EM_SETTEXTEX        = 0x0461;
-    private const uint EM_GETTEXTEX        = 0x045E;
-    private const uint EM_GETTEXTLENGTHEX  = 0x045F;
-    private const uint ST_DEFAULT          = 0x0;
-    private const uint GT_DEFAULT          = 0x0;
-    private const uint GTL_DEFAULT         = 0x0;
-    private const uint GTL_NUMCHARS        = 0x08;
-    private const uint CP_UNICODE          = 1200;
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct SETTEXTEX
-    {
-        public uint Flags;
-        public uint Codepage;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct GETTEXTEX
-    {
-        public int CbCh;
-        public uint Flags;
-        public uint Codepage;
-        public IntPtr LpDefaultChar;
-        public IntPtr LpUsedDefChar;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct GETTEXTLENGTHEX
-    {
-        public uint Flags;
-        public uint Codepage;
-    }
+    // Lift RichEdit's default ~512 KB text cap.
+    private const uint EM_EXLIMITTEXT  = 0x0435;
+    private const uint EM_GETLIMITTEXT = 0x00D5;
+    // O(1) caret line/column readout — see UpdateCursorPosition. Both count in the same
+    // bare-CR offset space as ITextSelection positions.
+    private const uint EM_LINEINDEX      = 0x00BB;
+    private const uint EM_EXLINEFROMCHAR = 0x0436;
 
     // Cached after first successful lookup so we don't rescan the visual tree on
     // every text load. Reset to Zero if a future SendMessage fails to retain the limit.
     private IntPtr _richEditHwnd;
+
+    // Set when a keystroke makes the active session's cached Content stale. The full
+    // editor buffer is then pulled into Content on demand (EnsureActiveContentSynced)
+    // rather than re-serialised on every keystroke.
+    private bool _activeContentDirty;
 
     /// <summary>
     /// Once the RichEditBox has been laid out and its inner RichEdit HWND has been
@@ -1690,36 +1692,23 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Loads <paramref name="text"/> into the editor, bypassing WinUI's
-    /// <c>TextDocument.SetText</c> for any non-trivial size. WinUI's path silently
-    /// truncates the input around ~524288 characters before it reaches the underlying
-    /// RichEdit (EM_EXLIMITTEXT alone doesn't help — the cap lives in the WinUI layer,
-    /// not the control). We send <c>EM_SETTEXTEX</c> directly to the RichEdit HWND
-    /// instead, marshalled as a UTF-16 string with no codepage conversion.
-    ///
-    /// <para>
-    /// Falls back to <see cref="RichEditExtensions.SetPlainText"/> if the HWND lookup
-    /// fails — that path will at least show the truncated content rather than nothing.
-    /// </para>
-    /// </summary>
-    /// <summary>
     /// Replaces the editor's content with <paramref name="text"/> via
-    /// <see cref="ITextDocument.LoadFromStream"/>. That's the documented WinUI 3 API
-    /// for loading large content — it bypasses the SetText character cap (~512 KB)
-    /// and avoids the chunked-TypeText approach which hung the UI for 30+ seconds
-    /// on a 1 MB file (16 sequential RichEdit reflows on the UI thread).
+    /// <see cref="ITextDocument.LoadFromStream"/> — the WinUI 3 API for loading large
+    /// content. It bypasses the <c>SetText</c> character cap (~512 KB) and avoids the
+    /// chunked-TypeText approach that hung the UI for 30+ seconds on a 1 MB file.
     ///
     /// <para>
-    /// We marshal the string into an in-memory random-access stream as UTF-16 LE
-    /// (which is what RichEdit's plain-text loader expects when given an unmarked
-    /// stream) and let the control's loader do the chunking internally.
+    /// We marshal the string into an in-memory stream as UTF-16 LE (what RichEdit's
+    /// plain-text loader expects for an unmarked stream) and let the control chunk it
+    /// internally. Falls back to <see cref="RichEditExtensions.SetPlainText"/> if the
+    /// stream load throws. Either way the themed text colour is re-applied afterwards,
+    /// because every load resets RichEdit's character formatting (see
+    /// <see cref="ApplyEditorTextColor"/>).
     /// </para>
     /// </summary>
     private void LoadEditorTextLarge(string text)
     {
         text ??= string.Empty;
-        string method = "stream";
-        int writtenChars = 0;
         try
         {
             using var ms = new Windows.Storage.Streams.InMemoryRandomAccessStream();
@@ -1733,53 +1722,30 @@ public sealed partial class MainWindow : Window
             }
             ms.Seek(0);
             Editor.Document.LoadFromStream(TextSetOptions.None, ms);
-            writtenChars = ReadEditorCharCount();
         }
-        catch (Exception ex)
+        catch
         {
-            method = $"error:{ex.GetType().Name}";
-            try { Editor.SetPlainText(text); writtenChars = ReadEditorCharCount(); } catch { }
+            try { Editor.SetPlainText(text); } catch { /* last-resort; show what we can */ }
         }
         finally
         {
-            // RichEdit drops the WinUI foreground colour on every stream/SetText load —
-            // re-stamp it so the loaded text is visible (not background-coloured).
             ApplyEditorTextColor();
-            LogLoad(method, text.Length, writtenChars);
         }
     }
 
     /// <summary>
-    /// Returns the editor's current character length. Uses the Win32 path when an
-    /// HWND is cached (more accurate for capped TextDocument), else
-    /// <see cref="ITextDocument.GetText"/>.
+    /// Pulls the editor's current text into the active session's cached
+    /// <see cref="TabSession.Content"/>, but only when a keystroke since the last sync
+    /// left it stale. Callers that read <c>Content</c> (save, find, go to, persist, tab
+    /// switch) invoke this first, so they always see current text while the editor
+    /// avoids serialising the whole document on every keystroke.
     /// </summary>
-    private int ReadEditorCharCount()
+    private void EnsureActiveContentSynced()
     {
-        if (_richEditHwnd != IntPtr.Zero)
-        {
-            var lengthEx = new GETTEXTLENGTHEX { Flags = GTL_DEFAULT | GTL_NUMCHARS, Codepage = CP_UNICODE };
-            IntPtr lenPtr = Marshal.AllocHGlobal(Marshal.SizeOf<GETTEXTLENGTHEX>());
-            try
-            {
-                Marshal.StructureToPtr(lengthEx, lenPtr, fDeleteOld: false);
-                return SendMessage(_richEditHwnd, EM_GETTEXTLENGTHEX, lenPtr, IntPtr.Zero).ToInt32();
-            }
-            finally { Marshal.FreeHGlobal(lenPtr); }
-        }
-        try { return Editor.GetPlainText().Length; } catch { return -1; }
-    }
-
-    private void LogLoad(string method, int requested, int actual)
-    {
-        try
-        {
-            var folder = Windows.Storage.ApplicationData.Current.LocalFolder.Path;
-            var path = System.IO.Path.Combine(folder, "editor-load.log");
-            var line = $"{DateTime.Now:HH:mm:ss.fff}  method={method,-12}  requested={requested,-10}  actual={actual,-10}  hwnd={_richEditHwnd}\r\n";
-            System.IO.File.AppendAllText(path, line);
-        }
-        catch { /* diagnostics are best-effort */ }
+        if (!_activeContentDirty) return;
+        if (ActiveSession is { } session)
+            session.Content = GetEditorTextLarge();
+        _activeContentDirty = false;
     }
 
     /// <summary>
@@ -1915,18 +1881,19 @@ public sealed partial class MainWindow : Window
         if (_suppressTextChanged) return;
         if (ActiveSession is not { } session) return;
 
-        bool wasDirty = session.IsModified;
-        // Win32 read per keystroke. The marshalling cost is microseconds; the WinUI
-        // GetText path would silently truncate at ~512 KB and discard everything the
-        // user has typed past that boundary.
-        session.Content = GetEditorTextLarge();
+        // Per-keystroke hot path: keep it O(1). Re-reading the whole editor buffer here
+        // (the previous behaviour) serialised the entire document on every keypress and
+        // made typing in multi-MB files lag. Instead, flag the cached Content stale
+        // (materialised on demand via EnsureActiveContentSynced) and flip the dirty flag.
+        _activeContentDirty = true;
 
         // Tab header / title bar only need refreshing when the dirty state actually
         // flips. This is the per-keystroke hot path â€” RefreshTabHeader iterates all
         // tabs, and AppWindow.Title is a COM call into the title bar. Doing them
         // unconditionally on every keypress was visibly laggy on large documents.
-        if (session.IsModified != wasDirty)
+        if (!session.IsModified)
         {
+            session.MarkDirty();
             RefreshTabHeader(session);
             UpdateTitle(session);
         }
@@ -2007,10 +1974,28 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        // The line index is rebuilt only when the buffer changes, so this is O(log lines)
-        // per cursor movement instead of O(N) over the entire buffer (the previous
-        // implementation walked from offset 0 on every selection change).
-        var (line, col) = session.Lines.GetLineColumn(Editor.GetSelectionStart());
+        int caret = Editor.GetSelectionStart();
+
+        // Fast path: ask RichEdit for the caret's line/column directly. This is O(1) and,
+        // crucially, does NOT materialise the document, so cursor movement (which fires on
+        // every keystroke) stays cheap even in multi-MB files. EM_EXLINEFROMCHAR and
+        // EM_LINEINDEX count in the same bare-CR offset space as the selection position.
+        if (_richEditHwnd != IntPtr.Zero)
+        {
+            long line0 = SendMessage(_richEditHwnd, EM_EXLINEFROMCHAR, IntPtr.Zero, (IntPtr)caret).ToInt64();
+            long lineStart = SendMessage(_richEditHwnd, EM_LINEINDEX, (IntPtr)line0, IntPtr.Zero).ToInt64();
+            if (lineStart >= 0)
+            {
+                StatusBarPosition.Text = $"Ln {line0 + 1}, Col {caret - lineStart + 1}";
+                return;
+            }
+        }
+
+        // Fallback (HWND not yet created): use the cached buffer + line index. Sync first
+        // so the index reflects any un-pulled keystrokes; offsets match because both the
+        // buffer and the selection are now bare-CR (see ToEditorText).
+        EnsureActiveContentSynced();
+        var (line, col) = session.Lines.GetLineColumn(caret);
         StatusBarPosition.Text = $"Ln {line}, Col {col}";
     }
 
