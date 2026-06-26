@@ -59,7 +59,7 @@ Inklet faithfully recreates the classic Windows 10 Notepad experience with moder
 - Minimal memory footprint
 - Mica backdrop behind the title bar and tabs
 
-> Not yet implemented on the new editor surface: word wrap, IME input, and screen-reader accessibility — planned follow-ups.
+> Not yet implemented on the new editor surface: IME input and screen-reader accessibility — planned follow-ups.
 
 ### File Associations
 - Registers as an "Open With" handler for common text formats: `.txt`, `.log`, `.ini`, `.cfg`, `.md`, `.xml`, `.json`, `.csv`, `.yaml`, `.yml`

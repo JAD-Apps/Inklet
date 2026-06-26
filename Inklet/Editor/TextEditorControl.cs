@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Microsoft.Graphics.Canvas.Text;
 using Microsoft.Graphics.Canvas.UI.Xaml;
 using Microsoft.UI;
@@ -44,6 +45,16 @@ internal sealed partial class TextEditorControl : UserControl
 
     private double _scrollY, _scrollX, _maxLineWidth;
 
+    // Word wrap: each logical line can occupy several display rows. _rowsBeforeLine is a
+    // prefix sum — _rowsBeforeLine[L-1] is the first display row of logical line L, and
+    // _rowsBeforeLine[lineCount] is the total display-row count. Rebuilt lazily (it is
+    // O(N)) when the text, font, viewport width or wrap setting changes.
+    private bool _wrap;
+    private readonly List<int> _rowsBeforeLine = new() { 0 };
+    private readonly List<int> _wrapScratch = new();
+    private bool _wrapMapDirty = true;
+    private int _cpr = 1; // chars per display row (cached)
+
     private Color _textColor = Colors.Black;
     private Color _bgColor = Colors.White;
     private Color _selColor = Color.FromArgb(0x80, 0x33, 0x99, 0xFF);
@@ -86,7 +97,7 @@ internal sealed partial class TextEditorControl : UserControl
         AllowDrop = true; // MainWindow wires DragOver/Drop to open dropped files
 
         _canvas.Draw += OnDraw;
-        _canvas.SizeChanged += (_, _) => UpdateScrollRange();
+        _canvas.SizeChanged += (_, _) => { UpdateScrollRange(); _canvas.Invalidate(); };
         _vScroll.Scroll += (_, e) => { _scrollY = e.NewValue; _canvas.Invalidate(); };
         _hScroll.Scroll += (_, e) => { _scrollX = e.NewValue; _canvas.Invalidate(); };
 
@@ -116,6 +127,7 @@ internal sealed partial class TextEditorControl : UserControl
         _buffer = new EditorBuffer(NormalizeNewlines(text ?? string.Empty));
         _caret = _anchor = 0;
         _scrollY = _scrollX = 0;
+        _wrapMapDirty = true;
         MeasureWidestLine();
         UpdateScrollRange();
         _canvas.Invalidate();
@@ -167,6 +179,7 @@ internal sealed partial class TextEditorControl : UserControl
         _italic = italic;
         RebuildTextFormat();
         _metricsMeasured = false;
+        _wrapMapDirty = true;
         MeasureWidestLine();
         UpdateScrollRange();
         _canvas.Invalidate();
@@ -234,6 +247,7 @@ internal sealed partial class TextEditorControl : UserControl
     private void AfterEdit()
     {
         _desiredColumnX = -1;
+        _wrapMapDirty = true;
         MeasureWidestLine();
         UpdateScrollRange();
         BringCaretIntoView();
@@ -301,36 +315,21 @@ internal sealed partial class TextEditorControl : UserControl
         RaiseSelectionChanged();
     }
 
-    private void MoveVertical(int dir, bool extend)
-    {
-        var (line, _) = _buffer.GetLineColumn(_caret);
-        if (_desiredColumnX < 0)
-        {
-            int ls = LineStart(_caret);
-            _desiredColumnX = (_caret - ls) * _charWidth;
-        }
-        int targetLine = Math.Clamp(line + dir, 1, _buffer.LineCount);
-        int targetStart = _buffer.GetOffsetForLine(targetLine);
-        int targetLen = LineEnd(targetStart) - targetStart;
-        int col = (int)Math.Round(_desiredColumnX / _charWidth);
-        col = Math.Clamp(col, 0, targetLen);
-        _caret = targetStart + col;
-        if (!extend) _anchor = _caret;
-        BringCaretIntoView();
-        ResetCaretBlink();
-        _canvas.Invalidate();
-        RaiseSelectionChanged();
-    }
+    private void MoveVertical(int dir, bool extend) => MoveByRows(dir, extend);
 
     private void MovePage(int dir, bool extend)
     {
-        int linesPerPage = Math.Max(1, (int)(_canvas.ActualHeight / _lineHeight) - 1);
-        var (line, _) = _buffer.GetLineColumn(_caret);
-        int targetLine = Math.Clamp(line + dir * linesPerPage, 1, _buffer.LineCount);
-        int targetStart = _buffer.GetOffsetForLine(targetLine);
-        int targetLen = LineEnd(targetStart) - targetStart;
-        var (_, col) = _buffer.GetLineColumn(_caret);
-        _caret = targetStart + Math.Min(col - 1, targetLen);
+        int rowsPerPage = Math.Max(1, (int)(_canvas.ActualHeight / _lineHeight) - 1);
+        MoveByRows(dir * rowsPerPage, extend);
+    }
+
+    /// <summary>Moves the caret up/down by display rows, keeping the sticky horizontal column.</summary>
+    private void MoveByRows(int deltaRows, bool extend)
+    {
+        var (row, x) = CaretDisplayPos(_caret);
+        if (_desiredColumnX < 0) _desiredColumnX = x;
+        int targetRow = Math.Clamp(row + deltaRows, 0, Math.Max(0, TotalRows() - 1));
+        _caret = OffsetAtDisplay(targetRow, _desiredColumnX);
         if (!extend) _anchor = _caret;
         BringCaretIntoView();
         ResetCaretBlink();
@@ -426,13 +425,8 @@ internal sealed partial class TextEditorControl : UserControl
 
     private int HitTest(double px, double py)
     {
-        int line = (int)((py + _scrollY - PadTop) / _lineHeight) + 1;
-        line = Math.Clamp(line, 1, _buffer.LineCount);
-        int start = _buffer.GetOffsetForLine(line);
-        int lineLen = LineEnd(start) - start;
-        int col = (int)Math.Round((px + _scrollX - PadLeft) / _charWidth);
-        col = Math.Clamp(col, 0, lineLen);
-        return start + col;
+        int displayRow = Math.Max(0, (int)((py + _scrollY - PadTop) / _lineHeight));
+        return OffsetAtDisplay(displayRow, px + _scrollX - PadLeft);
     }
 
     // ── Clipboard ────────────────────────────────────────────────────────────
@@ -486,8 +480,21 @@ internal sealed partial class TextEditorControl : UserControl
     public void CopyPlainSelection() => CopyPublic();
     public System.Threading.Tasks.Task PastePlainAsync() => PasteAsync();
 
-    /// <summary>Word wrap is not yet implemented in the Win2D surface; tracked as a follow-up.</summary>
-    public bool WordWrap { get; set; }
+    /// <summary>Wraps long lines to the viewport width (and hides the horizontal scrollbar).</summary>
+    public bool WordWrap
+    {
+        get => _wrap;
+        set
+        {
+            if (_wrap == value) return;
+            _wrap = value;
+            _wrapMapDirty = true;
+            _scrollX = 0;
+            UpdateScrollRange();
+            BringCaretIntoView();
+            _canvas.Invalidate();
+        }
+    }
 
     /// <summary>Inserts text at the caret (replacing any selection), e.g. Time/Date or Replace.</summary>
     public void InsertAtCaret(string text) => InsertText(text);
@@ -525,18 +532,24 @@ internal sealed partial class TextEditorControl : UserControl
 
     private void BringCaretIntoView()
     {
-        var (line, _) = _buffer.GetLineColumn(_caret);
-        double caretTop = PadTop + (line - 1) * _lineHeight;
+        var (row, x) = CaretDisplayPos(_caret);
+        double caretTop = PadTop + row * _lineHeight;
         double caretBottom = caretTop + _lineHeight;
         double viewH = _canvas.ActualHeight;
         if (caretTop < _scrollY) _scrollY = caretTop;
         else if (caretBottom > _scrollY + viewH) _scrollY = caretBottom - viewH;
 
-        int lineStart = _buffer.GetOffsetForLine(line);
-        double caretX = PadLeft + (_caret - lineStart) * _charWidth;
-        double viewW = _canvas.ActualWidth;
-        if (caretX - PadLeft < _scrollX) _scrollX = Math.Max(0, caretX - PadLeft);
-        else if (caretX + _charWidth > _scrollX + viewW) _scrollX = caretX + _charWidth - viewW;
+        if (_wrap)
+        {
+            _scrollX = 0;
+        }
+        else
+        {
+            double caretX = PadLeft + x;
+            double viewW = _canvas.ActualWidth;
+            if (caretX - PadLeft < _scrollX) _scrollX = Math.Max(0, caretX - PadLeft);
+            else if (caretX + _charWidth > _scrollX + viewW) _scrollX = caretX + _charWidth - viewW;
+        }
 
         UpdateScrollRange();
     }
@@ -568,9 +581,132 @@ internal sealed partial class TextEditorControl : UserControl
         _maxLineWidth = widest * _charWidth + PadLeft * 2;
     }
 
+    // ── Word-wrap mapping ─────────────────────────────────────────────────────
+
+    private string LineText(int line)
+    {
+        int start = _buffer.GetOffsetForLine(line);
+        int end = line < _buffer.LineCount ? _buffer.GetOffsetForLine(line + 1) : _buffer.Length;
+        return _buffer.GetText(start, end - start).TrimEnd('\n');
+    }
+
+    private int ComputeCharsPerRow()
+    {
+        double avail = _canvas.ActualWidth - PadLeft - 6;
+        return avail < _charWidth ? 1 : Math.Max(1, (int)(avail / Math.Max(1f, _charWidth)));
+    }
+
+    /// <summary>
+    /// Greedy monospace word wrap: fills <paramref name="rowStarts"/> with the start offset
+    /// (relative to the line) of each display row. Breaks after the last space/tab that fits,
+    /// or hard-breaks a word longer than the row. Always begins with 0.
+    /// </summary>
+    private static void WrapLine(string text, int cpr, List<int> rowStarts)
+    {
+        rowStarts.Clear();
+        rowStarts.Add(0);
+        int len = text.Length, pos = 0;
+        while (pos + cpr < len)
+        {
+            int limit = pos + cpr;
+            int brk = -1;
+            for (int j = limit; j > pos; j--)
+            {
+                char c = text[j - 1];
+                if (c == ' ' || c == '\t') { brk = j; break; }
+            }
+            int next = brk > pos ? brk : limit;
+            if (next <= pos) next = pos + 1;
+            rowStarts.Add(next);
+            pos = next;
+        }
+    }
+
+    private bool WrapReady => _rowsBeforeLine.Count == _buffer.LineCount + 1;
+
+    private void EnsureWrapMap()
+    {
+        if (!_wrap || _canvas.ActualWidth <= 1) return;
+        int cpr = ComputeCharsPerRow();
+        if (!_wrapMapDirty && cpr == _cpr && WrapReady) return;
+        _cpr = cpr;
+        _wrapMapDirty = false;
+        _rowsBeforeLine.Clear();
+        int lineCount = _buffer.LineCount, acc = 0;
+        for (int line = 1; line <= lineCount; line++)
+        {
+            _rowsBeforeLine.Add(acc);
+            WrapLine(LineText(line), cpr, _wrapScratch);
+            acc += _wrapScratch.Count;
+        }
+        _rowsBeforeLine.Add(acc);
+    }
+
+    /// <summary>Total display rows (= logical line count when wrap is off).</summary>
+    private int TotalRows()
+    {
+        if (!_wrap) return _buffer.LineCount;
+        EnsureWrapMap();
+        return WrapReady ? _rowsBeforeLine[_buffer.LineCount] : _buffer.LineCount;
+    }
+
+    /// <summary>Largest logical line whose first display row is &lt;= <paramref name="displayRow"/>.</summary>
+    private int LineAtDisplayRow(int displayRow)
+    {
+        int lc = _buffer.LineCount, lo = 1, hi = lc;
+        while (lo < hi)
+        {
+            int mid = (lo + hi + 1) / 2;
+            if (_rowsBeforeLine[mid - 1] <= displayRow) lo = mid; else hi = mid - 1;
+        }
+        return lo;
+    }
+
+    /// <summary>Maps a caret offset to its display row and x pixel (relative to <c>PadLeft</c>).</summary>
+    private (int row, float x) CaretDisplayPos(int offset)
+    {
+        var (line, _) = _buffer.GetLineColumn(offset);
+        int lineStart = _buffer.GetOffsetForLine(line);
+        int col = offset - lineStart;
+        EnsureWrapMap();
+        if (!_wrap || !WrapReady) return (line - 1, col * _charWidth);
+
+        WrapLine(LineText(line), _cpr, _wrapScratch);
+        int sub = _wrapScratch.Count - 1;
+        for (int i = 1; i < _wrapScratch.Count; i++)
+            if (col < _wrapScratch[i]) { sub = i - 1; break; }
+        return (_rowsBeforeLine[line - 1] + sub, (col - _wrapScratch[sub]) * _charWidth);
+    }
+
+    /// <summary>Maps a display row + x pixel (relative to <c>PadLeft</c>) to a buffer offset.</summary>
+    private int OffsetAtDisplay(int displayRow, double xRelToPad)
+    {
+        int colInRow = Math.Max(0, (int)Math.Round(xRelToPad / Math.Max(1f, _charWidth)));
+        EnsureWrapMap();
+        if (!_wrap || !WrapReady)
+        {
+            int line = Math.Clamp(displayRow + 1, 1, _buffer.LineCount);
+            int start = _buffer.GetOffsetForLine(line);
+            int lineLen = LineEnd(start) - start;
+            return start + Math.Clamp(colInRow, 0, lineLen);
+        }
+
+        int total = _rowsBeforeLine[_buffer.LineCount];
+        displayRow = Math.Clamp(displayRow, 0, Math.Max(0, total - 1));
+        int L = LineAtDisplayRow(displayRow);
+        int sub = displayRow - _rowsBeforeLine[L - 1];
+        string text = LineText(L);
+        WrapLine(text, _cpr, _wrapScratch);
+        sub = Math.Clamp(sub, 0, _wrapScratch.Count - 1);
+        int rowStart = _wrapScratch[sub];
+        int rowEnd = sub + 1 < _wrapScratch.Count ? _wrapScratch[sub + 1] : text.Length;
+        int col = Math.Clamp(colInRow, 0, rowEnd - rowStart);
+        return _buffer.GetOffsetForLine(L) + rowStart + col;
+    }
+
     private void UpdateScrollRange()
     {
-        double contentH = _buffer.LineCount * _lineHeight + PadTop * 2;
+        double contentH = TotalRows() * _lineHeight + PadTop * 2;
         double viewH = _canvas.ActualHeight;
         double vMax = Math.Max(0, contentH - viewH);
         _vScroll.Minimum = 0; _vScroll.Maximum = vMax;
@@ -580,6 +716,15 @@ internal sealed partial class TextEditorControl : UserControl
         _vScroll.Visibility = vMax > 0 ? Visibility.Visible : Visibility.Collapsed;
         _scrollY = Math.Clamp(_scrollY, 0, vMax);
         _vScroll.Value = _scrollY;
+
+        if (_wrap)
+        {
+            // Wrapped content never scrolls horizontally.
+            _hScroll.Maximum = 0;
+            _hScroll.Visibility = Visibility.Collapsed;
+            _scrollX = 0; _hScroll.Value = 0;
+            return;
+        }
 
         double viewW = _canvas.ActualWidth;
         double hMax = Math.Max(0, _maxLineWidth - viewW);
@@ -621,50 +766,69 @@ internal sealed partial class TextEditorControl : UserControl
             _lineHeight = (float)Math.Ceiling(probe.LayoutBounds.Height);
             if (_lineHeight < 4) _lineHeight = (float)Math.Ceiling(_fontSize * 1.35f);
             _metricsMeasured = true;
+            _wrapMapDirty = true; // metrics now accurate -> chars-per-row may change
             MeasureWidestLine();
             UpdateScrollRange();
         }
 
         double viewH = sender.ActualHeight;
         int lineCount = _buffer.LineCount;
-        int firstLine = Math.Max(1, (int)((_scrollY - PadTop) / _lineHeight) + 1);
-        int linesVisible = (int)(viewH / _lineHeight) + 2;
-        int lastLine = Math.Min(lineCount, firstLine + linesVisible);
-
         int selStart = SelectionStart, selEnd = SelectionStart + SelectionLength;
         float baseX = PadLeft - (float)_scrollX;
 
-        for (int line = firstLine; line <= lastLine; line++)
-        {
-            int start = _buffer.GetOffsetForLine(line);
-            int end = line < lineCount ? _buffer.GetOffsetForLine(line + 1) : _buffer.Length;
-            string raw = _buffer.GetText(start, end - start);
-            string text = raw.TrimEnd('\n');
-            float y = (float)(PadTop + (line - 1) * _lineHeight - _scrollY);
+        int firstRow = Math.Max(0, (int)((_scrollY - PadTop) / _lineHeight));
+        int lastRow = firstRow + (int)(viewH / _lineHeight) + 2;
 
-            // Selection highlight for this line.
-            if (selEnd > selStart && selEnd > start && selStart < end)
+        EnsureWrapMap();
+        bool wrap = _wrap && WrapReady;
+        int startLine = wrap ? LineAtDisplayRow(Math.Min(firstRow, _rowsBeforeLine[lineCount])) : firstRow + 1;
+        startLine = Math.Clamp(startLine, 1, lineCount);
+        int displayRow = wrap ? _rowsBeforeLine[startLine - 1] : startLine - 1;
+
+        for (int line = startLine; line <= lineCount; line++)
+        {
+            int lineStart = _buffer.GetOffsetForLine(line);
+            string text = LineText(line);
+
+            if (wrap) WrapLine(text, _cpr, _wrapScratch);
+            int rows = wrap ? _wrapScratch.Count : 1;
+
+            for (int sub = 0; sub < rows; sub++, displayRow++)
             {
-                int s = Math.Max(selStart, start) - start;
-                int eSel = Math.Min(selEnd, end) - start;
-                bool selectsNewline = selEnd > start + text.Length; // selection spans the line break
-                float selX1 = baseX + s * _charWidth;
-                float selX2 = baseX + Math.Min(eSel, text.Length) * _charWidth + (selectsNewline ? _charWidth * 0.5f : 0);
-                ds.FillRectangle(selX1, y, Math.Max(1, selX2 - selX1), _lineHeight, _selColor);
+                if (displayRow < firstRow) continue;
+                if (displayRow > lastRow) break;
+
+                int rs = wrap ? _wrapScratch[sub] : 0;
+                int re = wrap ? (sub + 1 < rows ? _wrapScratch[sub + 1] : text.Length) : text.Length;
+                int rowAbsStart = lineStart + rs, rowAbsEnd = lineStart + re;
+                float y = (float)(PadTop + displayRow * _lineHeight - _scrollY);
+
+                // Selection highlight for the part of this row inside the selection. s/e are
+                // columns relative to the row start, so each display row begins at baseX.
+                if (selEnd > selStart && selEnd > rowAbsStart && selStart <= rowAbsEnd)
+                {
+                    int s = Math.Max(selStart, rowAbsStart) - rowAbsStart;
+                    int e = Math.Min(selEnd, rowAbsEnd) - rowAbsStart;
+                    bool selectsBreak = selEnd > rowAbsEnd && re == text.Length; // spans the hard line break
+                    float x1 = baseX + s * _charWidth;
+                    float x2 = baseX + e * _charWidth + (selectsBreak ? _charWidth * 0.5f : 0);
+                    if (x2 > x1) ds.FillRectangle(x1, y, x2 - x1, _lineHeight, _selColor);
+                }
+
+                if (re > rs)
+                    ds.DrawText(text.Substring(rs, re - rs), baseX, y, _textColor, _textFormat);
             }
 
-            if (text.Length > 0)
-                ds.DrawText(text, baseX, y, _textColor, _textFormat);
+            if (displayRow > lastRow) break;
         }
 
         // Caret.
         if (_hasFocus && _caretVisible && SelectionLength == 0)
         {
-            var (cl, _) = _buffer.GetLineColumn(_caret);
-            int cls = _buffer.GetOffsetForLine(cl);
-            float cx = baseX + (_caret - cls) * _charWidth;
-            float cy = (float)(PadTop + (cl - 1) * _lineHeight - _scrollY);
-            ds.FillRectangle(cx, cy, 1.6f, _lineHeight, _textColor);
+            var (crow, cx) = CaretDisplayPos(_caret);
+            float caretX = baseX + cx;
+            float caretY = (float)(PadTop + crow * _lineHeight - _scrollY);
+            ds.FillRectangle(caretX, caretY, 1.6f, _lineHeight, _textColor);
         }
     }
 }

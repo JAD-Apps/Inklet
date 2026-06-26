@@ -4,6 +4,13 @@ All notable changes to Inklet are documented in this file.
 
 ---
 
+## [1.0.8] - 2026-06-26
+
+### Added
+- **Word wrap** on the custom Win2D editor (Format ▸ Word Wrap). Long lines wrap to the viewport width at word boundaries (hard-breaking words longer than a row), the horizontal scrollbar is hidden while wrapped, and caret movement, click hit-testing, selection and up/down navigation all operate on the wrapped display rows. Verified by running the app: a 586-character line wraps across rows and clicking into a wrapped row places the caret correctly.
+
+---
+
 ## [1.0.7] - 2026-06-26
 
 ### Fixed
