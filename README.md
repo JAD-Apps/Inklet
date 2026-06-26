@@ -54,7 +54,8 @@ Inklet faithfully recreates the classic Windows 10 Notepad experience with moder
 
 ### Performance
 - Instant startup
-- Graceful handling of large files with async loading
+- Documents of any length — files load through the RichEdit streaming path with no character cap, and the full text is shown (never silently truncated)
+- Responsive typing in large files — the editor never re-serialises the whole document on a keystroke; the cached copy is refreshed only when needed (save, find, go to)
 - Minimal memory footprint
 - Mica backdrop for modern appearance without overhead
 
