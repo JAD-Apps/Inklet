@@ -4,6 +4,13 @@ All notable changes to Inklet are documented in this file.
 
 ---
 
+## [1.0.7] - 2026-06-26
+
+### Fixed
+- Large documents rendered only the first portion visibly — everything past a certain point was drawn in the same colour as the Mica backdrop and so was invisible. `RichEditBox` loads content via `ITextDocument.LoadFromStream`, which resets RichEdit's character formatting to its internal `CFE_AUTOCOLOR` default rather than the WinUI `Foreground` brush; the auto colour matched the background. The editor now re-stamps an explicit themed foreground colour across the whole document after every load (and on light/dark theme switch), so the entire file is always visible regardless of length.
+
+---
+
 ## [1.0.5] - 2026-04-08
 
 ### Fixed

@@ -1635,10 +1635,52 @@ public sealed partial class MainWindow : Window
 
     /// <summary>
     /// Once the RichEditBox has been laid out and its inner RichEdit HWND has been
-    /// created, send EM_EXLIMITTEXT to remove the default ~512 KB text cap.
+    /// created, send EM_EXLIMITTEXT to remove the default ~512 KB text cap and apply
+    /// the themed text colour so the document is visible.
     /// </summary>
     private void Editor_Loaded(object _, RoutedEventArgs _e)
-        => LiftEditorTextLimit();
+    {
+        LiftEditorTextLimit();
+        ApplyEditorTextColor();
+        // A light/dark theme switch while the app is open changes the resolved text
+        // colour — re-stamp the whole document so it tracks the new theme.
+        Editor.ActualThemeChanged += (_, _) => ApplyEditorTextColor();
+    }
+
+    /// <summary>
+    /// Forces an explicit foreground colour onto the entire document.
+    ///
+    /// <para>
+    /// <see cref="ITextDocument.LoadFromStream"/> (and <c>SetText</c>) reset RichEdit's
+    /// character formatting to its internal default, which uses <c>CFE_AUTOCOLOR</c> —
+    /// the system window-text colour, not the WinUI <see cref="Control.Foreground"/>
+    /// brush. Over the Mica backdrop that auto colour can match the background, so the
+    /// bulk of a freshly-loaded document rendered invisibly (the reported "only the
+    /// first few lines show, the rest is the same colour as the background" bug).
+    /// </para>
+    ///
+    /// <para>
+    /// Setting an explicit RGB colour on the whole range removes the dependence on
+    /// auto-colour entirely. Newly-typed text inherits the colour of the character
+    /// before it, so a single application after each load keeps everything visible.
+    /// The colour is read from the editor's resolved <see cref="Control.Foreground"/>
+    /// brush so it always matches the current light/dark theme.
+    /// </para>
+    /// </summary>
+    private void ApplyEditorTextColor()
+    {
+        try
+        {
+            var color = (Editor.Foreground as SolidColorBrush)?.Color
+                        ?? (Editor.ActualTheme == ElementTheme.Dark ? Colors.White : Colors.Black);
+
+            // GetRange(0, int.MaxValue) clamps to the document length internally — the
+            // same idiom DocumentSelectAll uses. This formats an independent range, so
+            // it does not move the user's caret or selection.
+            Editor.Document.GetRange(0, int.MaxValue).CharacterFormat.ForegroundColor = color;
+        }
+        catch (Exception ex) { Debug.WriteLine($"ApplyEditorTextColor failed: {ex.Message}"); }
+    }
 
     /// <summary>
     /// Loads <paramref name="text"/> into the editor, bypassing WinUI's
@@ -1693,6 +1735,9 @@ public sealed partial class MainWindow : Window
         }
         finally
         {
+            // RichEdit drops the WinUI foreground colour on every stream/SetText load —
+            // re-stamp it so the loaded text is visible (not background-coloured).
+            ApplyEditorTextColor();
             LogLoad(method, text.Length, writtenChars);
         }
     }
