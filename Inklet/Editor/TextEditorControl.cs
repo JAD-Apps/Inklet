@@ -27,9 +27,9 @@ namespace Inklet.Editor;
 /// </summary>
 internal sealed partial class TextEditorControl : UserControl
 {
-    private readonly CanvasControl _canvas = new();
-    private readonly ScrollBar _vScroll = new() { Orientation = Orientation.Vertical };
-    private readonly ScrollBar _hScroll = new() { Orientation = Orientation.Horizontal };
+    private readonly CanvasControl _canvas = new() { IsTabStop = false };
+    private readonly ScrollBar _vScroll = new() { Orientation = Orientation.Vertical, IsTabStop = false };
+    private readonly ScrollBar _hScroll = new() { Orientation = Orientation.Horizontal, IsTabStop = false };
     private readonly DispatcherTimer _caretTimer = new() { Interval = TimeSpan.FromMilliseconds(530) };
 
     private EditorBuffer _buffer = new();
