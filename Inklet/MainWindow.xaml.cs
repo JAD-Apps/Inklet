@@ -235,24 +235,27 @@ public sealed partial class MainWindow : Window
                     // Reload file from diskâ€¦
                     var (content, state) = await FileService.ReadFileAsync(data.FilePath);
                     session.Document = state;
+                    var diskText = ToEditorText(content);
 
                     if (data.IsModified)
                     {
                         // â€¦but show the in-progress unsaved edits, not the on-disk version
-                        session.Content = data.Content;
-                        session.SavedContent = content;
+                        session.Content = ToEditorText(data.Content);
+                        session.SavedContent = diskText;
                     }
                     else
                     {
-                        session.Content = content;
-                        session.SavedContent = content;
+                        // Same reference for Content and SavedContent → tab is clean.
+                        session.Content = diskText;
+                        session.SavedContent = diskText;
                     }
                 }
                 else
                 {
                     // Untitled or missing file â€” restore content as-is
-                    session.Content = data.Content;
-                    session.SavedContent = data.IsModified ? string.Empty : data.Content;
+                    var restored = ToEditorText(data.Content);
+                    session.Content = restored;
+                    session.SavedContent = data.IsModified ? string.Empty : restored;
                     session.Document = BuildDocumentState(data);
                 }
 
@@ -894,8 +897,12 @@ public sealed partial class MainWindow : Window
             }
 
             var (content, state) = await FileService.ReadFileAsync(filePath);
-            session.Content = content;
-            session.SavedContent = content;
+            // Hold content in the editor's bare-CR convention so the cached copy shares
+            // one offset space with the control (see ToEditorText). Same reference for
+            // Content and SavedContent keeps the freshly-opened tab clean.
+            var editorText = ToEditorText(content);
+            session.Content = editorText;
+            session.SavedContent = editorText;
             session.FilePath = filePath;
             session.Document = state;
             session.CursorPosition = 0;
@@ -907,9 +914,9 @@ public sealed partial class MainWindow : Window
             if (ActiveSession == session)
             {
                 _suppressTextChanged = true;
-                // Use the Win32 path so WinUI's TextDocument.SetText doesn't truncate
+                // Use the stream path so WinUI's TextDocument.SetText doesn't truncate
                 // large files at ~512 KB.
-                LoadEditorTextLarge(content);
+                LoadEditorTextLarge(editorText);
                 _suppressTextChanged = false;
                 UpdateTitle(session);
                 UpdateStatusBar(session);
@@ -1779,14 +1786,15 @@ public sealed partial class MainWindow : Window
     /// Reads the editor's full content via <see cref="ITextDocument.SaveToStream"/>.
     /// WinUI's <see cref="ITextDocument.GetText"/> caps at the same ~512 KB boundary
     /// as its setter — using it to capture session content from a large document
-    /// would silently truncate everything after that point on every save and on
-    /// every keystroke (Editor_TextChanged stamps session.Content). The streaming
-    /// path mirrors how we LOAD large content via <see cref="LoadEditorTextLarge"/>.
+    /// would silently truncate everything after that point on every save. The
+    /// streaming path mirrors how we LOAD large content via <see cref="LoadEditorTextLarge"/>.
     ///
     /// <para>
-    /// Renormalises any bare CR back to CRLF — RichEdit converts CRLF to bare CR
-    /// internally, but the rest of the codebase (line ending detection, file save,
-    /// session persistence) expects CRLF on Windows.
+    /// The returned text keeps RichEdit's bare-CR line breaks — that is the editor's
+    /// native convention and the one its caret/selection offsets count in, so the
+    /// cached session copy stays in the same offset space as the control (see
+    /// <see cref="ToEditorText"/>). File saves re-normalise to the document's detected
+    /// style via <see cref="FileService.WriteFileAsync"/>.
     /// </para>
     /// </summary>
     private string GetEditorTextLarge()
@@ -1806,12 +1814,7 @@ public sealed partial class MainWindow : Window
 
             reader.LoadAsync(size).AsTask().GetAwaiter().GetResult();
             // ReadString takes a code-unit count, not a byte count, for the configured encoding.
-            var text = reader.ReadString(size / sizeof(char));
-
-            // RichEdit normalises CRLF -> CR on load. Restore CRLF for the rest of
-            // the pipeline. Replace bare \r (not part of \r\n) with \r\n. Use a
-            // single pass so we don't double up.
-            return NormalizeBareCrToCrlf(text);
+            return reader.ReadString(size / sizeof(char));
         }
         catch
         {
@@ -1822,28 +1825,16 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Replaces every bare <c>\r</c> with <c>\r\n</c>. Bare-CR is what RichEdit emits
-    /// after CRLF normalisation; we want CRLF back for the file save path.
+    /// Converts <paramref name="text"/> to the editor's in-memory line-ending
+    /// convention: a bare <c>\r</c> per break, which is what RichEdit stores and what
+    /// its caret/selection positions count. Holding session content in this convention
+    /// means Find, Go To and the Ln/Col readout all share one offset space with the
+    /// control — no per-newline translation and none of the drift that a CRLF cache
+    /// caused. Saving re-normalises to the document's detected style in
+    /// <see cref="FileService.WriteFileAsync"/>.
     /// </summary>
-    private static string NormalizeBareCrToCrlf(string s)
-    {
-        if (string.IsNullOrEmpty(s) || s.IndexOf('\r') < 0) return s;
-        var sb = new System.Text.StringBuilder(s.Length + (s.Length / 80));
-        for (int i = 0; i < s.Length; i++)
-        {
-            char c = s[i];
-            if (c == '\r')
-            {
-                sb.Append('\r').Append('\n');
-                if (i + 1 < s.Length && s[i + 1] == '\n') i++; // skip if already CRLF
-            }
-            else
-            {
-                sb.Append(c);
-            }
-        }
-        return sb.ToString();
-    }
+    private static string ToEditorText(string? text)
+        => LineEndingDetector.Normalize(text ?? string.Empty, LineEndingStyle.Cr);
 
     /// <summary>
     /// Locates the inner RichEdit HWND (if not already cached) and sends EM_EXLIMITTEXT
