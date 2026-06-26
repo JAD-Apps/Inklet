@@ -310,35 +310,6 @@ public sealed partial class MainWindow : Window
         // and the absence is jarring â€” without focus the first keystroke is lost. We
         // defer to the dispatcher so the focus call runs after the current layout pass.
         DispatcherQueue.TryEnqueue(() => Editor.Focus(FocusState.Programmatic));
-
-        // Phase 1 PoC: overlay the Win2D virtualised editor and load the file into it,
-        // to verify it renders deep content correctly (and composes without airspace).
-        DispatcherQueue.TryEnqueue(SetupCanvasEditorPoc);
-    }
-
-    private Inklet.Editor.TextEditorControl? _canvasEditor;
-
-    private void SetupCanvasEditorPoc()
-    {
-        try
-        {
-            _canvasEditor = new Inklet.Editor.TextEditorControl();
-            Grid.SetRow(_canvasEditor, 0); // same cell as the RichEditBox
-            EditorArea.Children.Add(_canvasEditor); // added last -> on top
-            _canvasEditor.SetColors(Colors.White, Windows.UI.Color.FromArgb(255, 0x20, 0x20, 0x20),
-                Windows.UI.Color.FromArgb(0x80, 0x33, 0x99, 0xFF));
-            _canvasEditor.SetFont("Consolas", 14f, false, false);
-            Editor.Visibility = Visibility.Collapsed;
-
-            if (!string.IsNullOrWhiteSpace(_initialFilePath) && File.Exists(_initialFilePath))
-            {
-                var (content, _) = FileService.ReadFileAsync(_initialFilePath).GetAwaiter().GetResult();
-                _canvasEditor.SetText(content);
-                Debug.WriteLine($"Canvas PoC loaded {content.Length} chars, {_canvasEditor.LineCount} lines");
-            }
-            DispatcherQueue.TryEnqueue(() => _canvasEditor?.Focus());
-        }
-        catch (Exception ex) { Debug.WriteLine($"Canvas PoC failed: {ex.Message}"); }
     }
 
     private void ResizeWindow(int width, int height)
@@ -435,7 +406,7 @@ public sealed partial class MainWindow : Window
         // The editor now mirrors session.Content; nothing pending to pull back.
         _activeContentDirty = false;
 
-        Editor.TextWrapping = _settings.WordWrap ? TextWrapping.Wrap : TextWrapping.NoWrap;
+        Editor.WordWrap = _settings.WordWrap;
         UpdateTitle(session);
         UpdateStatusBar(session);
         Editor.Focus(FocusState.Programmatic);
@@ -1300,7 +1271,7 @@ public sealed partial class MainWindow : Window
     private void MenuWordWrap_Click(object _, RoutedEventArgs _e)
     {
         var wrap = MenuWordWrap.IsChecked;
-        Editor.TextWrapping = wrap ? TextWrapping.Wrap : TextWrapping.NoWrap;
+        Editor.WordWrap = wrap;
         _settings.WordWrap = wrap;
     }
 
@@ -1334,14 +1305,14 @@ public sealed partial class MainWindow : Window
         var boldCheck = new CheckBox
         {
             Content = "Bold",
-            IsChecked = Editor.FontWeight.Weight == FontWeights.Bold.Weight
+            IsChecked = _settings.FontWeight == "Bold"
         };
         panel.Children.Add(boldCheck);
 
         var italicCheck = new CheckBox
         {
             Content = "Italic",
-            IsChecked = Editor.FontStyle == Windows.UI.Text.FontStyle.Italic
+            IsChecked = _settings.FontStyle == "Italic"
         };
         panel.Children.Add(italicCheck);
 
@@ -1359,32 +1330,24 @@ public sealed partial class MainWindow : Window
         {
             var chosen = (fontCombo.SelectedItem as string) ?? fontCombo.Text;
             if (!string.IsNullOrWhiteSpace(chosen))
-            {
-                Editor.FontFamily = new FontFamily(chosen);
                 _settings.FontFamily = chosen;
-            }
 
             _baseFontSize = sizeBox.Value;
             _settings.FontSize = _baseFontSize;
+            _settings.FontWeight = boldCheck.IsChecked == true ? "Bold" : "Normal";
+            _settings.FontStyle = italicCheck.IsChecked == true ? "Italic" : "Normal";
+
+            // Re-applies family, zoom-adjusted size, bold and italic to the Win2D editor.
             ApplyZoom();
-
-            var isBold = boldCheck.IsChecked == true;
-            Editor.FontWeight = isBold ? FontWeights.Bold : FontWeights.Normal;
-            _settings.FontWeight = isBold ? "Bold" : "Normal";
-
-            var isItalic = italicCheck.IsChecked == true;
-            Editor.FontStyle = isItalic ? Windows.UI.Text.FontStyle.Italic : Windows.UI.Text.FontStyle.Normal;
-            _settings.FontStyle = isItalic ? "Italic" : "Normal";
         }
     }
 
     private void ApplyFontToEditor()
     {
-        Editor.FontFamily = new FontFamily(_settings.FontFamily);
-        Editor.FontWeight = _settings.FontWeight == "Bold" ? FontWeights.Bold : FontWeights.Normal;
-        Editor.FontStyle = _settings.FontStyle == "Italic"
-            ? Windows.UI.Text.FontStyle.Italic
-            : Windows.UI.Text.FontStyle.Normal;
+        bool bold = _settings.FontWeight == "Bold";
+        bool italic = _settings.FontStyle == "Italic";
+        float size = (float)(_baseFontSize * _zoomPercent / 100.0);
+        Editor.SetFont(_settings.FontFamily, Math.Max(1f, size), bold, italic);
     }
 
     #endregion
@@ -1411,7 +1374,7 @@ public sealed partial class MainWindow : Window
 
     private void ApplyZoom()
     {
-        Editor.FontSize = _baseFontSize * _zoomPercent / 100.0;
+        ApplyFontToEditor();
         StatusBarZoom.Text = $"{_zoomPercent}%";
     }
 
@@ -1654,272 +1617,72 @@ public sealed partial class MainWindow : Window
 
     #region Editor Events
 
-    // Lift RichEdit's default ~512 KB text cap.
-    private const uint EM_EXLIMITTEXT  = 0x0435;
-    private const uint EM_GETLIMITTEXT = 0x00D5;
-    // O(1) caret line/column readout — see UpdateCursorPosition. Both count in the same
-    // bare-CR offset space as ITextSelection positions.
-    private const uint EM_LINEINDEX      = 0x00BB;
-    private const uint EM_EXLINEFROMCHAR = 0x0436;
-
-    // Cached after first successful lookup so we don't rescan the visual tree on
-    // every text load. Reset to Zero if a future SendMessage fails to retain the limit.
-    private IntPtr _richEditHwnd;
-
-    // Set when a keystroke makes the active session's cached Content stale. The full
-    // editor buffer is then pulled into Content on demand (EnsureActiveContentSynced)
-    // rather than re-serialised on every keystroke.
+    // Set when a keystroke marks the active session's cached Content stale; it is pulled
+    // into Content on demand (EnsureActiveContentSynced) rather than re-read each keystroke.
     private bool _activeContentDirty;
 
     /// <summary>
-    /// Once the RichEditBox has been laid out and its inner RichEdit HWND has been
-    /// created, send EM_EXLIMITTEXT to remove the default ~512 KB text cap and apply
-    /// the themed text colour so the document is visible.
+    /// Wires the editor's change events, applies the themed colours and font, and tracks
+    /// light/dark theme switches.
     /// </summary>
     private void Editor_Loaded(object _, RoutedEventArgs _e)
     {
-        LiftEditorTextLimit();
-        ApplyEditorTextColor();
-        // A light/dark theme switch while the app is open changes the resolved text
-        // colour — re-stamp the whole document so it tracks the new theme.
-        Editor.ActualThemeChanged += (_, _) => ApplyEditorTextColor();
+        Editor.TextChanged += Editor_TextChanged;
+        Editor.SelectionChanged += Editor_SelectionChanged;
+        Editor.ActualThemeChanged += (_, _) => ApplyEditorTheme();
+        ApplyEditorTheme();
+        ApplyFontToEditor();
+        ApplyZoom();
     }
 
-    /// <summary>
-    /// Forces an explicit foreground colour onto the entire document.
-    ///
-    /// <para>
-    /// <see cref="ITextDocument.LoadFromStream"/> (and <c>SetText</c>) reset RichEdit's
-    /// character formatting to its internal default, which uses <c>CFE_AUTOCOLOR</c> —
-    /// the system window-text colour, not the WinUI <see cref="Control.Foreground"/>
-    /// brush. Over the Mica backdrop that auto colour can match the background, so the
-    /// bulk of a freshly-loaded document rendered invisibly (the reported "only the
-    /// first few lines show, the rest is the same colour as the background" bug).
-    /// </para>
-    ///
-    /// <para>
-    /// Setting an explicit RGB colour on the whole range removes the dependence on
-    /// auto-colour entirely. Newly-typed text inherits the colour of the character
-    /// before it, so a single application after each load keeps everything visible.
-    /// The colour is read from the editor's resolved <see cref="Control.Foreground"/>
-    /// brush so it always matches the current light/dark theme.
-    /// </para>
-    /// </summary>
-    private void ApplyEditorTextColor()
+    /// <summary>Applies the current light/dark theme colours to the Win2D editor surface.</summary>
+    private void ApplyEditorTheme()
     {
         try
         {
-            var color = (Editor.Foreground as SolidColorBrush)?.Color
-                        ?? (Editor.ActualTheme == ElementTheme.Dark ? Colors.White : Colors.Black);
-
-            // GetRange(0, int.MaxValue) clamps to the document length internally — the
-            // same idiom DocumentSelectAll uses. This formats an independent range, so
-            // it does not move the user's caret or selection.
-            Editor.Document.GetRange(0, int.MaxValue).CharacterFormat.ForegroundColor = color;
+            bool dark = Editor.ActualTheme == ElementTheme.Dark;
+            var text = dark ? Windows.UI.Color.FromArgb(255, 0xF2, 0xF2, 0xF2)
+                            : Windows.UI.Color.FromArgb(255, 0x1A, 0x1A, 0x1A);
+            var bg = dark ? Windows.UI.Color.FromArgb(255, 0x1F, 0x1F, 0x1F)
+                          : Windows.UI.Color.FromArgb(255, 0xFF, 0xFF, 0xFF);
+            var sel = dark ? Windows.UI.Color.FromArgb(0x99, 0x2C, 0x5A, 0x8C)
+                           : Windows.UI.Color.FromArgb(0x99, 0xAD, 0xD6, 0xFF);
+            Editor.SetColors(text, bg, sel);
         }
-        catch (Exception ex) { Debug.WriteLine($"ApplyEditorTextColor failed: {ex.Message}"); }
+        catch (Exception ex) { Debug.WriteLine($"ApplyEditorTheme failed: {ex.Message}"); }
     }
 
-    /// <summary>
-    /// Replaces the editor's content with <paramref name="text"/> via
-    /// <see cref="ITextDocument.LoadFromStream"/> — the WinUI 3 API for loading large
-    /// content. It bypasses the <c>SetText</c> character cap (~512 KB) and avoids the
-    /// chunked-TypeText approach that hung the UI for 30+ seconds on a 1 MB file.
-    ///
-    /// <para>
-    /// We marshal the string into an in-memory stream as UTF-16 LE (what RichEdit's
-    /// plain-text loader expects for an unmarked stream) and let the control chunk it
-    /// internally. Falls back to <see cref="RichEditExtensions.SetPlainText"/> if the
-    /// stream load throws. Either way the themed text colour is re-applied afterwards,
-    /// because every load resets RichEdit's character formatting (see
-    /// <see cref="ApplyEditorTextColor"/>).
-    /// </para>
-    /// </summary>
-    private void LoadEditorTextLarge(string text)
-    {
-        text ??= string.Empty;
-        try
-        {
-            using var ms = new Windows.Storage.Streams.InMemoryRandomAccessStream();
-            using (var writer = new Windows.Storage.Streams.DataWriter(ms))
-            {
-                writer.UnicodeEncoding = Windows.Storage.Streams.UnicodeEncoding.Utf16LE;
-                writer.ByteOrder = Windows.Storage.Streams.ByteOrder.LittleEndian;
-                writer.WriteString(text);
-                writer.StoreAsync().AsTask().GetAwaiter().GetResult();
-                writer.DetachStream();
-            }
-            ms.Seek(0);
-            Editor.Document.LoadFromStream(TextSetOptions.None, ms);
-        }
-        catch
-        {
-            try { Editor.SetPlainText(text); } catch { /* last-resort; show what we can */ }
-        }
-        finally
-        {
-            ApplyEditorTextColor();
-        }
-    }
+    /// <summary>Replaces the editor content. The Win2D editor renders documents of any size.</summary>
+    private void LoadEditorTextLarge(string text) => Editor.SetText(text);
 
-    /// <summary>
-    /// Pulls the editor's current text into the active session's cached
-    /// <see cref="TabSession.Content"/>, but only when a keystroke since the last sync
-    /// left it stale. Callers that read <c>Content</c> (save, find, go to, persist, tab
-    /// switch) invoke this first, so they always see current text while the editor
-    /// avoids serialising the whole document on every keystroke.
-    /// </summary>
+    /// <summary>Pulls the editor text into the active session, only when an edit left it stale.</summary>
     private void EnsureActiveContentSynced()
     {
         if (!_activeContentDirty) return;
         if (ActiveSession is { } session)
-            session.Content = GetEditorTextLarge();
+            session.Content = Editor.GetText();
         _activeContentDirty = false;
     }
 
-    /// <summary>
-    /// Reads the editor's full content via <see cref="ITextDocument.SaveToStream"/>.
-    /// WinUI's <see cref="ITextDocument.GetText"/> caps at the same ~512 KB boundary
-    /// as its setter — using it to capture session content from a large document
-    /// would silently truncate everything after that point on every save. The
-    /// streaming path mirrors how we LOAD large content via <see cref="LoadEditorTextLarge"/>.
-    ///
-    /// <para>
-    /// The returned text keeps RichEdit's bare-CR line breaks — that is the editor's
-    /// native convention and the one its caret/selection offsets count in, so the
-    /// cached session copy stays in the same offset space as the control (see
-    /// <see cref="ToEditorText"/>). File saves re-normalise to the document's detected
-    /// style via <see cref="FileService.WriteFileAsync"/>.
-    /// </para>
-    /// </summary>
-    private string GetEditorTextLarge()
-    {
-        try
-        {
-            using var ms = new Windows.Storage.Streams.InMemoryRandomAccessStream();
-            Editor.Document.SaveToStream(TextGetOptions.None, ms);
-            ms.Seek(0);
-
-            using var reader = new Windows.Storage.Streams.DataReader(ms);
-            reader.UnicodeEncoding = Windows.Storage.Streams.UnicodeEncoding.Utf16LE;
-            reader.ByteOrder = Windows.Storage.Streams.ByteOrder.LittleEndian;
-
-            var size = (uint)ms.Size;
-            if (size == 0) return string.Empty;
-
-            reader.LoadAsync(size).AsTask().GetAwaiter().GetResult();
-            // ReadString takes a code-unit count, not a byte count, for the configured encoding.
-            return reader.ReadString(size / sizeof(char));
-        }
-        catch
-        {
-            // Fall back to the capped WinUI path rather than throw — we'd rather show
-            // a truncated buffer than crash on save.
-            return Editor.GetPlainText();
-        }
-    }
+    /// <summary>Returns the editor's full text (LF line endings; normalised to the file's style on save).</summary>
+    private string GetEditorTextLarge() => Editor.GetText();
 
     /// <summary>
-    /// Converts <paramref name="text"/> to the editor's in-memory line-ending
-    /// convention: a bare <c>\r</c> per break, which is what RichEdit stores and what
-    /// its caret/selection positions count. Holding session content in this convention
-    /// means Find, Go To and the Ln/Col readout all share one offset space with the
-    /// control — no per-newline translation and none of the drift that a CRLF cache
-    /// caused. Saving re-normalises to the document's detected style in
-    /// <see cref="FileService.WriteFileAsync"/>.
+    /// Converts incoming text to the editor's LF line-ending convention. The editor holds
+    /// LF breaks so Find/Go To/Ln-Col share one offset space; saves re-normalise to the
+    /// document's detected style via <see cref="FileService.WriteFileAsync"/>.
     /// </summary>
     private static string ToEditorText(string? text)
-        => LineEndingDetector.Normalize(text ?? string.Empty, LineEndingStyle.Cr);
+        => LineEndingDetector.Normalize(text ?? string.Empty, LineEndingStyle.Lf);
 
-    /// <summary>
-    /// Locates the inner RichEdit HWND (if not already cached) and sends EM_EXLIMITTEXT
-    /// to lift the default 524288-character text cap. Verifies the limit was applied by
-    /// reading it back via EM_GETLIMITTEXT — if the verification fails, the cached HWND
-    /// is invalidated so the next call retries the scan.
-    ///
-    /// <para>
-    /// Called both on Editor.Loaded and again immediately before each large text load,
-    /// because some XAML island timing makes the RichEdit HWND unavailable at first
-    /// Loaded — by the time a file is being loaded the HWND is reliably present.
-    /// </para>
-    /// </summary>
-    private void LiftEditorTextLimit()
-    {
-        try
-        {
-            if (_richEditHwnd == IntPtr.Zero)
-                _richEditHwnd = FindRichEditHwnd();
-            if (_richEditHwnd == IntPtr.Zero) return;
-
-            SendMessage(_richEditHwnd, EM_EXLIMITTEXT, IntPtr.Zero, (IntPtr)int.MaxValue);
-
-            // Verify — if the control doesn't echo back our int.MaxValue, drop the
-            // cached HWND so the next attempt rescans (we may have grabbed the wrong
-            // window class).
-            var actual = SendMessage(_richEditHwnd, EM_GETLIMITTEXT, IntPtr.Zero, IntPtr.Zero).ToInt64();
-            if (actual < 1_000_000)
-                _richEditHwnd = IntPtr.Zero;
-        }
-        catch (Exception ex) { Debug.WriteLine($"LiftEditorTextLimit failed: {ex.Message}"); }
-    }
-
-    /// <summary>
-    /// Walks the main window's descendants and aggressively bumps the text limit on
-    /// any child window whose class name looks like an Edit/RichEdit. Returns the
-    /// first one whose limit successfully reads back as the new max — that's the
-    /// HWND we'll cache for subsequent text loads.
-    /// </summary>
-    private IntPtr FindRichEditHwnd()
-    {
-        var mainHwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
-        IntPtr found = IntPtr.Zero;
-
-        bool Callback(IntPtr h, IntPtr _l)
-        {
-            var buf = new char[256];
-            int len = GetClassName(h, buf, buf.Length);
-            if (len <= 0) return true;
-            var cls = new string(buf, 0, len);
-
-            // Try EM_EXLIMITTEXT on anything that looks like an edit-style control.
-            // Known WinUI 3 / Win32 RichEdit classes: RICHEDIT50W, RICHEDIT60W, RichEdit50W,
-            // and the bare 'Edit' class. EM_EXLIMITTEXT is harmless on non-edit controls
-            // (they just ignore the message).
-            if (cls.IndexOf("EDIT", StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                SendMessage(h, EM_EXLIMITTEXT, IntPtr.Zero, (IntPtr)int.MaxValue);
-                var actual = SendMessage(h, EM_GETLIMITTEXT, IntPtr.Zero, IntPtr.Zero).ToInt64();
-                if (actual >= 1_000_000 && found == IntPtr.Zero)
-                {
-                    found = h;
-                    // Don't stop — keep walking and bumping any other edit-class HWNDs
-                    // we find too. The cache only stores the first, but the limit gets
-                    // raised on all of them so whichever one Document.SetText routes to
-                    // is unrestricted.
-                }
-            }
-            return true;
-        }
-
-        EnumChildWindows(mainHwnd, Callback, IntPtr.Zero);
-        return found;
-    }
-
-    private void Editor_TextChanged(object _, RoutedEventArgs _e)
+    private void Editor_TextChanged(object? _, EventArgs _e)
     {
         if (_suppressTextChanged) return;
         if (ActiveSession is not { } session) return;
 
-        // Per-keystroke hot path: keep it O(1). Re-reading the whole editor buffer here
-        // (the previous behaviour) serialised the entire document on every keypress and
-        // made typing in multi-MB files lag. Instead, flag the cached Content stale
-        // (materialised on demand via EnsureActiveContentSynced) and flip the dirty flag.
+        // O(1) per keystroke: flag the cached Content stale (materialised on demand) and
+        // flip the dirty state; refresh the tab header only on the clean-to-dirty transition.
         _activeContentDirty = true;
-
-        // Tab header / title bar only need refreshing when the dirty state actually
-        // flips. This is the per-keystroke hot path â€” RefreshTabHeader iterates all
-        // tabs, and AppWindow.Title is a COM call into the title bar. Doing them
-        // unconditionally on every keypress was visibly laggy on large documents.
         if (!session.IsModified)
         {
             session.MarkDirty();
@@ -1928,21 +1691,7 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void Editor_SelectionChanged(object _, RoutedEventArgs _e)
-    {
-        UpdateCursorPosition();
-    }
-
-    private void Editor_PointerWheelChanged(object _, PointerRoutedEventArgs e)
-    {
-        // Ctrl+Scroll adjusts zoom; let the TextBox handle plain scrolling normally.
-        if (e.KeyModifiers.HasFlag(Windows.System.VirtualKeyModifiers.Control))
-        {
-            var delta = e.GetCurrentPoint(Editor).Properties.MouseWheelDelta;
-            SetZoom(_zoomPercent + (delta > 0 ? 10 : -10));
-            e.Handled = true;
-        }
-    }
+    private void Editor_SelectionChanged(object? _, EventArgs _e) => UpdateCursorPosition();
 
     #endregion
 
@@ -1997,34 +1746,15 @@ public sealed partial class MainWindow : Window
 
     private void UpdateCursorPosition()
     {
-        if (ActiveSession is not { } session)
+        if (ActiveSession is null)
         {
             StatusBarPosition.Text = "Ln 1, Col 1";
             return;
         }
 
-        int caret = Editor.GetSelectionStart();
-
-        // Fast path: ask RichEdit for the caret's line/column directly. This is O(1) and,
-        // crucially, does NOT materialise the document, so cursor movement (which fires on
-        // every keystroke) stays cheap even in multi-MB files. EM_EXLINEFROMCHAR and
-        // EM_LINEINDEX count in the same bare-CR offset space as the selection position.
-        if (_richEditHwnd != IntPtr.Zero)
-        {
-            long line0 = SendMessage(_richEditHwnd, EM_EXLINEFROMCHAR, IntPtr.Zero, (IntPtr)caret).ToInt64();
-            long lineStart = SendMessage(_richEditHwnd, EM_LINEINDEX, (IntPtr)line0, IntPtr.Zero).ToInt64();
-            if (lineStart >= 0)
-            {
-                StatusBarPosition.Text = $"Ln {line0 + 1}, Col {caret - lineStart + 1}";
-                return;
-            }
-        }
-
-        // Fallback (HWND not yet created): use the cached buffer + line index. Sync first
-        // so the index reflects any un-pulled keystrokes; offsets match because both the
-        // buffer and the selection are now bare-CR (see ToEditorText).
-        EnsureActiveContentSynced();
-        var (line, col) = session.Lines.GetLineColumn(caret);
+        // The Win2D editor owns the caret and its line index, so this is O(1) and needs
+        // no document materialisation — cursor movement stays cheap even in huge files.
+        var (line, col) = Editor.CaretLineColumn;
         StatusBarPosition.Text = $"Ln {line}, Col {col}";
     }
 
@@ -2154,21 +1884,6 @@ public sealed partial class MainWindow : Window
     {
         WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
     }
-
-    // P/Invokes used by Editor_Loaded / FindRichEditHwnd to remove the RichEdit
-    // default text-length cap. Cannot use LibraryImport because EnumChildWindows
-    // takes a delegate (not blittable in the source-generator sense).
-    private delegate bool EnumChildProc(IntPtr hWnd, IntPtr lParam);
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool EnumChildWindows(IntPtr hwndParent, EnumChildProc lpEnumFunc, IntPtr lParam);
-
-    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetClassNameW")]
-    private static extern int GetClassName(IntPtr hWnd, [Out] char[] lpClassName, int nMaxCount);
-
-    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "SendMessageW")]
-    private static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
 
     #endregion
 }

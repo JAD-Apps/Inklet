@@ -83,6 +83,7 @@ internal sealed partial class TextEditorControl : UserControl
 
         IsTabStop = true;
         UseSystemFocusVisuals = false;
+        AllowDrop = true; // MainWindow wires DragOver/Drop to open dropped files
 
         _canvas.Draw += OnDraw;
         _canvas.SizeChanged += (_, _) => UpdateScrollRange();
@@ -470,6 +471,42 @@ internal sealed partial class TextEditorControl : UserControl
     public void SelectAllPublic() => SetSelection(0, _buffer.Length);
     public void UndoPublic() => DoUndo();
     public void RedoPublic() => DoRedo();
+
+    // ── RichEditBox/RichEditExtensions-compatible API (keeps MainWindow call sites stable) ──
+    public string GetPlainText() => GetText();
+    public void SetPlainText(string? text) => SetText(text);
+    public int GetSelectionStart() => SelectionStart;
+    public void SetSelectionStart(int position) => SetSelection(position, SelectionLength);
+    public int GetSelectionLength() => SelectionLength;
+    public void SetSelectionLength(int length) => SetSelection(SelectionStart, length);
+    public void DocumentSelectAll() => SelectAllPublic();
+    public void DocumentUndo() => UndoPublic();
+    public void DocumentRedo() => RedoPublic();
+    public void CutPlainSelection() => CutPublic();
+    public void CopyPlainSelection() => CopyPublic();
+    public System.Threading.Tasks.Task PastePlainAsync() => PasteAsync();
+
+    /// <summary>Word wrap is not yet implemented in the Win2D surface; tracked as a follow-up.</summary>
+    public bool WordWrap { get; set; }
+
+    /// <summary>Inserts text at the caret (replacing any selection), e.g. Time/Date or Replace.</summary>
+    public void InsertAtCaret(string text) => InsertText(text);
+
+    /// <summary>Deletes the current selection (menu Edit ▸ Delete with a selection).</summary>
+    public void DeleteSelection()
+    {
+        if (SelectionLength == 0) return;
+        DeleteSelectionInternal();
+        AfterEdit();
+    }
+
+    /// <summary>Moves the caret to the start of <paramref name="line"/> (1-based) and reveals it.</summary>
+    public void GoToLine(int line)
+    {
+        line = Math.Clamp(line, 1, _buffer.LineCount);
+        SetSelection(_buffer.GetOffsetForLine(line), 0);
+        Focus();
+    }
 
     // ── Scrolling / metrics ──────────────────────────────────────────────────
 

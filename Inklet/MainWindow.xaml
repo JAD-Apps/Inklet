@@ -4,6 +4,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:local="using:Inklet"
+    xmlns:editor="using:Inklet.Editor"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
@@ -277,53 +278,21 @@
         <!-- Editor + Find bar -->
         <Grid Grid.Row="1" x:Name="EditorArea">
             <!--
-                RichEditBox (rather than TextBox) because WinUI 3's TextBox silently
-                truncates content at ~524288 characters. RichEditBox routes through
-                RichEdit and handles MB-scale documents. We treat it as a plain-text
-                surface — see Inklet/Editor/RichEditExtensions.cs for the API adapter.
+                Custom Win2D virtualised editor (Inklet/Editor/TextEditorControl.cs).
+                WinUI 3's TextBox truncates at ~524288 chars and RichEditBox stops
+                rendering glyphs past ~512 KB; a native Win32 control would render large
+                files but WinUI's composition occludes child HWNDs (airspace). The Win2D
+                surface is a real XAML element AND virtualises rendering, so it displays
+                documents of any length and stays fast.
             -->
-            <RichEditBox x:Name="Editor"
-                         AcceptsReturn="True"
-                         TextWrapping="NoWrap"
-                         IsSpellCheckEnabled="False"
-                         IsTextPredictionEnabled="False"
-                         FontFamily="Consolas"
-                         FontSize="14"
-                         Padding="12,10"
-                         BorderThickness="0"
-                         Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+            <editor:TextEditorControl x:Name="Editor"
                          VerticalAlignment="Stretch"
                          HorizontalAlignment="Stretch"
-                         ScrollViewer.VerticalScrollBarVisibility="Auto"
-                         ScrollViewer.HorizontalScrollBarVisibility="Auto"
                          Loaded="Editor_Loaded"
-                         TextChanged="Editor_TextChanged"
-                         SelectionChanged="Editor_SelectionChanged"
-                         PointerWheelChanged="Editor_PointerWheelChanged"
                          AllowDrop="True"
                          DragOver="Editor_DragOver"
                          Drop="Editor_Drop"
-                         AutomationProperties.AutomationId="EditorTextBox">
-                <!--
-                    The editor cannot use a fully-transparent background: RichEdit draws its
-                    caret with a DSTINVERT blit, and inverting transparent pixels produces no
-                    visible output (the caret was invisible to the user but visible in
-                    screenshots, which capture the inverted alpha). LayerFillColorDefault is
-                    a near-transparent system fill that still has enough opacity for the
-                    caret invert to land on real pixels.
-                    Border brushes stay transparent — only the fill needs alpha for caret.
-                -->
-                <RichEditBox.Resources>
-                    <SolidColorBrush x:Key="TextControlBackground" Color="{ThemeResource LayerFillColorDefault}" />
-                    <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="{ThemeResource LayerFillColorDefault}" />
-                    <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="{ThemeResource LayerFillColorDefault}" />
-                    <SolidColorBrush x:Key="TextControlBackgroundDisabled" Color="{ThemeResource LayerFillColorDefault}" />
-                    <SolidColorBrush x:Key="TextControlBorderBrush" Color="Transparent" />
-                    <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="Transparent" />
-                    <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="Transparent" />
-                    <SolidColorBrush x:Key="TextControlBorderBrushDisabled" Color="Transparent" />
-                </RichEditBox.Resources>
-            </RichEditBox>
+                         AutomationProperties.AutomationId="EditorTextBox" />
 
             <!-- Find & Replace overlay -->
             <Border x:Name="FindReplaceBar" VerticalAlignment="Top" HorizontalAlignment="Right"
