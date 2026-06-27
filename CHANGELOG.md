@@ -4,6 +4,16 @@ All notable changes to Inklet are documented in this file.
 
 ---
 
+## [1.0.9] - 2026-06-27
+
+### Added
+- **IME (East-Asian composition) support** on the custom Win2D editor, implemented with `CoreTextEditContext` (`Editor/TextEditorControl.Ime.cs`). The editor registers with the WinUI 3 desktop text-services stack via `CoreTextServicesManager.GetForCurrentView()` and calls `NotifyFocusEnter`/`NotifyFocusLeave`, so an active IME drives composition and commit through the edit-context events (`TextUpdating`, `TextRequested`, `SelectionRequested`, `SelectionUpdating`, `CompositionStarted`/`Completed`). The candidate window is placed at the caret via `LayoutRequested`. Plain Latin typing continues to arrive through `CharacterReceived` (the IME never composes it) and is suppressed only while a composition is in flight so input is never doubled. The editor keeps the IME in sync by calling `NotifyTextChanged`/`NotifySelectionChanged` on its own edits.
+
+### Changed
+- Replaced an earlier raw-TSF (`ITextStoreACP`) input experiment with `CoreTextEditContext`. A raw TSF text store connects and is queried, but a custom WinUI 3 control is not treated by the IME as its composition target (composition fell through to plain Latin input); `CoreTextServicesManager`/`CoreTextEditContext` plugs into WinUI's own input pipeline instead. The TSF interop/bridge/store files were removed. `CoreTextServicesManager.GetForCurrentView()` works in this WinUI 3 desktop build (the historical desktop limitation is gone — verified by probe).
+
+---
+
 ## [1.0.8] - 2026-06-26
 
 ### Added

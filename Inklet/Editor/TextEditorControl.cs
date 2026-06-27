@@ -59,6 +59,16 @@ internal sealed partial class TextEditorControl : UserControl
     private Color _bgColor = Colors.White;
     private Color _selColor = Color.FromArgb(0x80, 0x33, 0x99, 0xFF);
 
+    // IME via CoreTextEditContext — the WinUI 3 desktop text-services hook (see
+    // TextEditorControl.Ime.cs). Created lazily on first focus. Plain Latin typing still
+    // arrives via CharacterReceived; the IME drives composition/commit through the
+    // edit-context events. _inEcCallback guards against echoing IME edits back as notifications.
+    private Windows.UI.Text.Core.CoreTextEditContext? _editContext;
+    private bool _ecTried;
+    private bool _imeComposing;  // true between CompositionStarted and CompositionCompleted
+    private bool _inEcCallback;  // true while applying an IME-initiated edit
+    private IntPtr _windowHwnd;  // top-level window (for client<->screen mapping)
+
     private int _caret;          // offset into the buffer
     private int _anchor;         // selection anchor (== caret when no selection)
     private bool _caretVisible = true;
@@ -110,8 +120,8 @@ internal sealed partial class TextEditorControl : UserControl
 
         KeyDown += OnKeyDown;
         CharacterReceived += OnCharacterReceived;
-        GotFocus += (_, _) => { _hasFocus = true; StartCaretBlink(); _canvas.Invalidate(); };
-        LostFocus += (_, _) => { _hasFocus = false; _caretTimer.Stop(); _caretVisible = false; _canvas.Invalidate(); };
+        GotFocus += (_, _) => { _hasFocus = true; EnsureEditContext(); _editContext?.NotifyFocusEnter(); StartCaretBlink(); _canvas.Invalidate(); };
+        LostFocus += (_, _) => { _hasFocus = false; _editContext?.NotifyFocusLeave(); _imeComposing = false; _caretTimer.Stop(); _caretVisible = false; _canvas.Invalidate(); };
 
         _caretTimer.Tick += (_, _) => { _caretVisible = !_caretVisible; InvalidateCaret(); };
 
@@ -194,54 +204,70 @@ internal sealed partial class TextEditorControl : UserControl
 
     public void Focus() => Focus(FocusState.Programmatic);
 
+    /// <summary>Supplies the top-level window handle (used for client&lt;-&gt;screen mapping).</summary>
+    public void SetWindowHandle(IntPtr hwnd)
+    {
+        _windowHwnd = hwnd;
+        EnsureEditContext(); // the HWND may arrive after first focus; set up now that we have it
+    }
+
     // ── Editing ──────────────────────────────────────────────────────────────
 
     private void InsertText(string text)
     {
         text = NormalizeNewlines(text);
-        if (SelectionLength > 0) DeleteSelectionInternal();
-        _buffer.Insert(_caret, text);
-        _caret += text.Length;
-        _anchor = _caret;
-        AfterEdit();
+        int s = SelectionStart, oldLen = SelectionLength;
+        if (oldLen > 0) _buffer.Delete(s, oldLen);
+        _buffer.Insert(s, text);
+        _caret = _anchor = s + text.Length;
+        CommitAppEdit(s, oldLen, text.Length);
     }
 
-    private void DeleteSelectionInternal()
+    private void DeleteRange(int start, int length)
     {
-        int s = SelectionStart, l = SelectionLength;
-        _buffer.Delete(s, l);
-        _caret = _anchor = s;
+        if (length <= 0) return;
+        _buffer.Delete(start, length);
+        _caret = _anchor = start;
+        CommitAppEdit(start, length, 0);
     }
 
     private void Backspace()
     {
-        if (SelectionLength > 0) { DeleteSelectionInternal(); AfterEdit(); return; }
+        if (SelectionLength > 0) { DeleteRange(SelectionStart, SelectionLength); return; }
         if (_caret == 0) return;
-        // Treat CRLF as one unit defensively (buffer is LF, so this is just one char).
-        int removeStart = _caret - 1;
-        _buffer.Delete(removeStart, 1);
-        _caret = _anchor = removeStart;
-        AfterEdit();
+        DeleteRange(_caret - 1, 1);
     }
 
     private void DeleteForward()
     {
-        if (SelectionLength > 0) { DeleteSelectionInternal(); AfterEdit(); return; }
+        if (SelectionLength > 0) { DeleteRange(SelectionStart, SelectionLength); return; }
         if (_caret >= _buffer.Length) return;
-        _buffer.Delete(_caret, 1);
-        AfterEdit();
+        DeleteRange(_caret, 1);
     }
 
     private void DoUndo()
     {
+        int oldLen = _buffer.Length;
         var pos = _buffer.Undo();
-        if (pos is int p) { _caret = _anchor = Math.Clamp(p, 0, _buffer.Length); AfterEdit(); }
+        if (pos is int p) { _caret = _anchor = Math.Clamp(p, 0, _buffer.Length); CommitAppEdit(0, oldLen, _buffer.Length); }
     }
 
     private void DoRedo()
     {
+        int oldLen = _buffer.Length;
         var pos = _buffer.Redo();
-        if (pos is int p) { _caret = _anchor = Math.Clamp(p, 0, _buffer.Length); AfterEdit(); }
+        if (pos is int p) { _caret = _anchor = Math.Clamp(p, 0, _buffer.Length); CommitAppEdit(0, oldLen, _buffer.Length); }
+    }
+
+    /// <summary>App-initiated edit: tell the IME the document changed, then refresh the view.</summary>
+    private void CommitAppEdit(int modStart, int modOldLen, int modNewLen)
+    {
+        if (_editContext is not null && !_inEcCallback)
+        {
+            var changed = new Windows.UI.Text.Core.CoreTextRange { StartCaretPosition = modStart, EndCaretPosition = modStart + modOldLen };
+            _editContext.NotifyTextChanged(changed, modNewLen, CurrentSelectionRange());
+        }
+        AfterEdit();
     }
 
     private void AfterEdit()
@@ -260,6 +286,12 @@ internal sealed partial class TextEditorControl : UserControl
 
     private void OnCharacterReceived(UIElement sender, CharacterReceivedRoutedEventArgs args)
     {
+        // Plain Latin typing arrives here as a normal character; the IME does NOT compose it
+        // (TextUpdating never fires for it), so we insert it directly. While an IME composition
+        // is in flight, text is delivered through the edit-context events instead — suppress
+        // here so we don't double-insert.
+        if (_imeComposing) return;
+
         char c = args.Character;
         // Tab is the only control char accepted as text; the rest (backspace, CR/LF,
         // arrows, …) are handled in KeyDown.
@@ -444,8 +476,7 @@ internal sealed partial class TextEditorControl : UserControl
     {
         if (SelectionLength == 0) return;
         CopySelection();
-        DeleteSelectionInternal();
-        AfterEdit();
+        DeleteRange(SelectionStart, SelectionLength);
     }
 
     public async System.Threading.Tasks.Task PasteAsync()
@@ -503,8 +534,7 @@ internal sealed partial class TextEditorControl : UserControl
     public void DeleteSelection()
     {
         if (SelectionLength == 0) return;
-        DeleteSelectionInternal();
-        AfterEdit();
+        DeleteRange(SelectionStart, SelectionLength);
     }
 
     /// <summary>Moves the caret to the start of <paramref name="line"/> (1-based) and reveals it.</summary>
@@ -743,7 +773,12 @@ internal sealed partial class TextEditorControl : UserControl
     private void ResetCaretBlink() { if (_hasFocus) { _caretTimer.Stop(); _caretVisible = true; _caretTimer.Start(); } }
     private void InvalidateCaret() => _canvas.Invalidate();
 
-    private void RaiseSelectionChanged() => SelectionChanged?.Invoke(this, EventArgs.Empty);
+    private void RaiseSelectionChanged()
+    {
+        if (_editContext is not null && !_inEcCallback)
+            _editContext.NotifySelectionChanged(CurrentSelectionRange());
+        SelectionChanged?.Invoke(this, EventArgs.Empty);
+    }
 
     private static string NormalizeNewlines(string s)
     {

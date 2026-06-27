@@ -1625,6 +1625,7 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private void Editor_Loaded(object _, RoutedEventArgs _e)
     {
+        Editor.SetWindowHandle(WinRT.Interop.WindowNative.GetWindowHandle(this));
         Editor.TextChanged += Editor_TextChanged;
         Editor.SelectionChanged += Editor_SelectionChanged;
         Editor.ActualThemeChanged += (_, _) => ApplyEditorTheme();
