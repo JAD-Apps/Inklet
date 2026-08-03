@@ -13,6 +13,13 @@ Inklet faithfully recreates the classic Windows 10 Notepad experience with moder
 
 ![Inklet](Inklet.png)
 
+## Download
+
+Grab the latest portable build from [Releases](https://github.com/John-Donnelly/Inklet/releases/latest) — unzip and run `Inklet.exe`. Self-contained, so no .NET runtime is needed.
+
+> Builds are currently unsigned; Windows SmartScreen will warn on first run.
+> Choose **More info** → **Run anyway** if you trust the source.
+
 ## Features
 
 ### File Operations
@@ -72,13 +79,6 @@ Inklet faithfully recreates the classic Windows 10 Notepad experience with moder
 
 ### File Associations
 - Registers as an "Open With" handler for common text formats: `.txt`, `.log`, `.ini`, `.cfg`, `.md`, `.xml`, `.json`, `.csv`, `.yaml`, `.yml`
-
-## Download
-
-Grab the latest portable build from [Releases](https://github.com/John-Donnelly/Inklet/releases/latest) — unzip and run `Inklet.exe`. Self-contained, so no .NET runtime is needed.
-
-> Builds are currently unsigned; Windows SmartScreen will warn on first run.
-> Choose **More info** → **Run anyway** if you trust the source.
 
 ## Requirements
 
