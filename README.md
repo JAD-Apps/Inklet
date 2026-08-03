@@ -7,6 +7,10 @@
 [![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/JAD-Apps/Inklet?label=download&logo=github)](https://github.com/JAD-Apps/Inklet/releases/latest)
 
+<p align="center">
+<img src="docs/media/inklet-main.png" alt="Inklet with three documents open as tabs, the status bar reporting caret position, line ending and encoding for the active file" width="900">
+</p>
+
 A lightweight, modern Notepad clone for Windows built with WinUI 3 and .NET 8.
 
 Inklet faithfully recreates the classic Windows 10 Notepad experience with modern WinUI 3 styling, Mica backdrop, and system theme support — while staying as light and fast as possible.
@@ -32,6 +36,9 @@ Grab the latest portable build from [Releases](https://github.com/JAD-Apps/Inkle
 - **Drag & Drop** — Drop files directly onto the editor
 
 ### Edit Operations
+
+![Find & Replace open over a text document, with the search term entered, a replacement queued, and the first match highlighted in the body text while the status bar tracks the caret position](docs/media/inklet-find-replace.png)
+
 - **Undo / Redo** — Ctrl+Z / Ctrl+Y
 - **Cut / Copy / Paste / Delete** — Standard clipboard operations
 - **Find & Replace** — With match-case option (Ctrl+F / Ctrl+H)
@@ -67,6 +74,9 @@ Grab the latest portable build from [Releases](https://github.com/JAD-Apps/Inkle
 - Automatic detection and display in status bar
 
 ### Performance
+
+![Scrolling continuously through a 242 MB, four-million-line log file with the mouse wheel; lines redraw without stalling as the viewport moves](docs/media/inklet-large-file.gif)
+
 - Instant startup
 - Documents of any length — a custom Win2D editor draws only the lines visible in the viewport, so files of any size display in full and stay responsive (the built-in WinUI text controls stop rendering large documents)
 - Responsive typing in large files — the editor never re-serialises the whole document on a keystroke; the cached copy is refreshed only when needed (save, find, go to)
