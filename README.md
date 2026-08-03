@@ -11,6 +11,8 @@
 <img src="docs/media/inklet-main.png" alt="Inklet with three documents open as tabs, the status bar reporting caret position, line ending and encoding for the active file" width="900">
 </p>
 
+**Status:** released and actively developed · **Latest:** v1.0.9 · **Requires:** Windows 10 1809 (build 17763) or later
+
 A lightweight, modern Notepad clone for Windows built with WinUI 3 and .NET 8.
 
 Inklet faithfully recreates the classic Windows 10 Notepad experience with modern WinUI 3 styling, Mica backdrop, and system theme support — while staying as light and fast as possible.
