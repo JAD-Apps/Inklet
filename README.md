@@ -5,6 +5,7 @@
 ![.NET](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet&logoColor=white)
 ![WinUI 3](https://img.shields.io/badge/WinUI-3-0078D4)
 [![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/John-Donnelly/Inklet?label=download&logo=github)](https://github.com/John-Donnelly/Inklet/releases/latest)
 
 A lightweight, modern Notepad clone for Windows built with WinUI 3 and .NET 8.
 
@@ -71,6 +72,13 @@ Inklet faithfully recreates the classic Windows 10 Notepad experience with moder
 
 ### File Associations
 - Registers as an "Open With" handler for common text formats: `.txt`, `.log`, `.ini`, `.cfg`, `.md`, `.xml`, `.json`, `.csv`, `.yaml`, `.yml`
+
+## Download
+
+Grab the latest portable build from [Releases](https://github.com/John-Donnelly/Inklet/releases/latest) — unzip and run `Inklet.exe`. Self-contained, so no .NET runtime is needed.
+
+> Builds are currently unsigned; Windows SmartScreen will warn on first run.
+> Choose **More info** → **Run anyway** if you trust the source.
 
 ## Requirements
 
