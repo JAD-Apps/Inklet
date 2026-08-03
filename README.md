@@ -10,6 +10,7 @@ A lightweight, modern Notepad clone for Windows built with WinUI 3 and .NET 8.
 Inklet faithfully recreates the classic Windows 10 Notepad experience with modern WinUI 3 styling, Mica backdrop, and system theme support — while staying as light and fast as possible.
 
 ![Inklet](Inklet.png)
+[![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue.svg)](LICENSE)
 
 ## Features
 
@@ -92,7 +93,15 @@ dotnet test Inklet.Tests
 
 ## License
 
-This project is licensed for personal, non-commercial use only. See [LICENSE](LICENSE) for details.
+Inklet is **source-available, not open source**, under the
+[PolyForm Noncommercial License 1.0.0](LICENSE).
+
+You may read, build and modify the source for any noncommercial purpose.
+Commercial use — including redistribution, resale, or publishing to an
+application store — is reserved to JAD Apps. For a commercial licence,
+get in touch via [jadapps.app](https://jadapps.app).
+
+© 2026 John Donnelly, trading as JAD Apps.
 
 ## Privacy
 
