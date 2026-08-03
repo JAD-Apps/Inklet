@@ -54,4 +54,4 @@ If this policy changes in a future release, the updated version will be committe
 ## Contact
 
 Questions about this policy can be directed to the developer via the GitHub repository:
-[https://github.com/John-Donnelly/Inklet](https://github.com/John-Donnelly/Inklet)
+[https://github.com/JAD-Apps/Inklet](https://github.com/JAD-Apps/Inklet)

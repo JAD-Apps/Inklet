@@ -1,11 +1,11 @@
 # Inklet
 
-[![CI](https://github.com/John-Donnelly/Inklet/actions/workflows/ci.yml/badge.svg)](https://github.com/John-Donnelly/Inklet/actions/workflows/ci.yml)
+[![CI](https://github.com/JAD-Apps/Inklet/actions/workflows/ci.yml/badge.svg)](https://github.com/JAD-Apps/Inklet/actions/workflows/ci.yml)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D4?logo=windows&logoColor=white)
 ![.NET](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet&logoColor=white)
 ![WinUI 3](https://img.shields.io/badge/WinUI-3-0078D4)
 [![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue.svg)](LICENSE)
-[![Release](https://img.shields.io/github/v/release/John-Donnelly/Inklet?label=download&logo=github)](https://github.com/John-Donnelly/Inklet/releases/latest)
+[![Release](https://img.shields.io/github/v/release/JAD-Apps/Inklet?label=download&logo=github)](https://github.com/JAD-Apps/Inklet/releases/latest)
 
 A lightweight, modern Notepad clone for Windows built with WinUI 3 and .NET 8.
 
@@ -15,7 +15,7 @@ Inklet faithfully recreates the classic Windows 10 Notepad experience with moder
 
 ## Download
 
-Grab the latest portable build from [Releases](https://github.com/John-Donnelly/Inklet/releases/latest) — unzip and run `Inklet.exe`. Self-contained, so no .NET runtime is needed.
+Grab the latest portable build from [Releases](https://github.com/JAD-Apps/Inklet/releases/latest) — unzip and run `Inklet.exe`. Self-contained, so no .NET runtime is needed.
 
 > Builds are currently unsigned; Windows SmartScreen will warn on first run.
 > Choose **More info** → **Run anyway** if you trust the source.
@@ -117,7 +117,7 @@ Inklet collects no data. See [PRIVACY_POLICY.md](PRIVACY_POLICY.md) for details.
 
 ## Author
 
-John Donnelly — [JAD Apps](https://github.com/John-Donnelly)
+John Donnelly — [JAD Apps](https://github.com/JAD-Apps)
 
 © 2025 JAD Apps. All rights reserved.
 
