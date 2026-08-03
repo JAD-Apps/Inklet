@@ -1,5 +1,9 @@
 # Inklet
 
+![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D4?logo=windows&logoColor=white)
+![.NET](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet&logoColor=white)
+![WinUI 3](https://img.shields.io/badge/WinUI-3-0078D4)
+
 A lightweight, modern Notepad clone for Windows built with WinUI 3 and .NET 8.
 
 Inklet faithfully recreates the classic Windows 10 Notepad experience with modern WinUI 3 styling, Mica backdrop, and system theme support — while staying as light and fast as possible.
