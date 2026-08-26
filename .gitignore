@@ -80,3 +80,13 @@ build_output.txt
 # Developer scratch / stray output (was previously committed empty)
 *_stderr.txt
 *_stdout.txt
+
+# Signing material — dev certs and keys stay local, never committed
+*.cer
+*.pfx
+*.snk
+*_TemporaryKey.pfx
+
+# Agent instruction files — local only
+CLAUDE.md
+AGENTS.md
