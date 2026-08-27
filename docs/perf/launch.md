@@ -1,4 +1,4 @@
-# Inklet performance measurements
+﻿# Inklet performance measurements
 
 Protocol: `Scripts/Measure-Launch.ps1` and `Scripts/Measure-Typing.ps1` against an
 unpackaged x64 Release build (`-p:WindowsPackageType=None -p:WindowsAppSDKSelfContained=true`),
@@ -66,3 +66,29 @@ footprint and stays ~flat in file size.
 Smoke (automated): open 100 MB -> Ctrl+End -> Ctrl+Home -> 3x PageDown ->
 arrows -> shift-select -> Delete -> Ctrl+Z -> type -> Ctrl+S: app healthy,
 save byte-identical except the 9-byte edit.
+
+## Extreme-size validation (10 GB / megaline / CJK / mixed-EOL, 2026-08-27)
+
+10 GB log (~113 M lines), real app, Release x64:
+
+| Scenario | result |
+|---|---|
+| Typing DURING background index | p50 0.8 / p95 42 / p99 79 ms (after the LOH + batched-absorb + indexer-priority fixes; was p99 1,422 ms) |
+| Typing after indexing completes | p50 0.7 / p95 15 / p99 41 ms - identical to a small file |
+| Ctrl+End across 113 M lines | 61 ms |
+| Go To line 50,000,000 + edit there | works; edit landed correctly |
+| Save (one edit at far end + one mid-file) | 5.4 s wall (disk-bound sequential), file delta EXACTLY +17 bytes, byte-identical elsewhere |
+| Private bytes at 10 GB | 155 MB (working set grows with reclaimable page cache only) |
+
+Pathological/encoding corpus:
+
+| File | typing p50/p95/p99 (ms) | notes |
+|---|---|---|
+| corpus-megaline.txt (256 MB, ONE line) | 10.4 / 16.4 / 77 | each keystroke rebuilds the 64 K-cap layout; documented cost, no stall/crash (old wrap would hang) |
+| corpus-cjk.txt (64 MB CJK/mixed-width) | 1.4 / 15.7 / 32 | |
+| corpus-mixed-eol.txt (CRLF/LF/CR alternating) | - | open -> edit -> save: +7 bytes exactly, mixed endings byte-preserved |
+
+Root causes fixed for the during-index jank: tier-2 long[] break lists and
+128 KB decode chunks were LOH-sized (Gen2 pauses on the UI thread); every
+segment absorb decoded a fresh chunk at the moving frontier; absorbs ran one
+tree op per segment; the indexer thread competed at normal priority.
