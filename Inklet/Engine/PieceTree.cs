@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 
 namespace Inklet.Engine;
@@ -29,12 +29,12 @@ internal readonly struct Piece
     public static Piece Create(PieceBufferKind kind, ICharBuffer buffer, long start, long length)
     {
         long end = start + length;
-        bool firstIsLf = buffer[start] == '\n';
-        bool lastIsCr = buffer[end - 1] == '\r';
+        bool firstIsLf = buffer.PeekChar(start) == '\n';
+        bool lastIsCr = buffer.PeekChar(end - 1) == '\r';
         long breaks = buffer.CountBreakEndsInRange(start, end);
         // Split-CRLF correction: a trailing CR whose LF lies just beyond the piece is
         // a break piece-locally, but the buffer's break for it ends outside the range.
-        if (lastIsCr && end < buffer.Length && buffer[end] == '\n') breaks++;
+        if (lastIsCr && end < buffer.Length && buffer.PeekChar(end) == '\n') breaks++;
         return new Piece(kind, start, length, breaks, firstIsLf, lastIsCr);
     }
 
@@ -46,7 +46,7 @@ internal readonly struct Piece
     public long BreakEnd(ICharBuffer buffer, long k)
     {
         long end = Start + Length;
-        bool corrected = LastIsCr && end < buffer.Length && buffer[end] == '\n';
+        bool corrected = LastIsCr && end < buffer.Length && buffer.PeekChar(end) == '\n';
         long raw = Breaks - (corrected ? 1 : 0);
         if (k < raw) return buffer.GetBreakEndAfter(Start, k) - Start;
         return Length; // the corrected split-CRLF break ends at the piece boundary
@@ -57,7 +57,7 @@ internal readonly struct Piece
     {
         long end = Start + Length;
         long c = buffer.CountBreakEndsInRange(Start, Start + localPos);
-        bool corrected = LastIsCr && end < buffer.Length && buffer[end] == '\n';
+        bool corrected = LastIsCr && end < buffer.Length && buffer.PeekChar(end) == '\n';
         if (corrected && localPos == Length) c++;
         return c;
     }

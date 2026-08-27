@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 
 namespace Inklet.Engine;
@@ -13,7 +13,10 @@ namespace Inklet.Engine;
 /// </summary>
 internal sealed class MappedCharBuffer : ICharBuffer
 {
-    private const int ChunkBytes = 128 * 1024;
+    // 32 KB chunks keep decoded char[] entries (<=64 KB) off the large-object
+    // heap - steady chunk turnover during background indexing must not feed
+    // the LOH, or Gen2 pauses land on the UI thread.
+    private const int ChunkBytes = 32 * 1024;
 
     private readonly IByteSource _source;
     private readonly TextCodec _codec;
@@ -50,6 +53,49 @@ internal sealed class MappedCharBuffer : ICharBuffer
             if (unit == Length) return PeekUnitAtFrontier();
             var (chunk, idx) = ResolveChunk(unit);
             return chunk.Chars[idx];
+        }
+    }
+
+    /// <summary>
+    /// Classification read with no chunk decode and no caching: exact for
+    /// fixed-width codecs; for UTF-8 an ASCII byte is exact and any multi-byte
+    /// char comes back as U+FFFD (never a line terminator, which is all the
+    /// callers ask). The absorb path peeks the char just before the moving
+    /// frontier on every segment - this must stay allocation-free.
+    /// </summary>
+    public char PeekChar(long unit)
+    {
+        if (unit >= Length) return PeekUnitAtFrontier();
+        switch (_codec.Class)
+        {
+            case CodecClass.SingleByte:
+            {
+                byte b = _source.GetSpan(_contentOrigin + unit, 1)[0];
+                return b < 0x80 ? (char)b : '\uFFFD';
+            }
+            case CodecClass.Utf16LE:
+            {
+                var s = _source.GetSpan(_contentOrigin + unit * 2, 2);
+                return (char)(s[0] | (s[1] << 8));
+            }
+            case CodecClass.Utf16BE:
+            {
+                var s = _source.GetSpan(_contentOrigin + unit * 2, 2);
+                return (char)((s[0] << 8) | s[1]);
+            }
+            case CodecClass.Utf8:
+            {
+                // The frontier-adjacent unit (absorb hot path) maps straight to the
+                // last indexed byte; other units use the sample-grid mapping (the
+                // segment detail is LRU-cached, e.g. the caret's segment).
+                long byteAt = unit == Length - 1
+                    ? _index.IndexedBytes - 1
+                    : UnitToContentByte(unit, out _);
+                byte b = _source.GetSpan(_contentOrigin + byteAt, 1)[0];
+                return b < 0x80 ? (char)b : '\uFFFD';
+            }
+            default:
+                throw new InvalidOperationException();
         }
     }
 

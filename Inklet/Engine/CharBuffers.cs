@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 
 namespace Inklet.Engine;
@@ -25,6 +25,14 @@ internal interface ICharBuffer
 {
     long Length { get; }
     char this[long index] { get; }
+
+    /// <summary>
+    /// Cheap single-char read used for CR/LF classification in piece metadata.
+    /// Never decodes or caches; multi-byte chars may come back as U+FFFD, which
+    /// is fine - they are never line terminators. May be called AT Length (the
+    /// frontier peek for split-CRLF correction) when content continues beyond.
+    /// </summary>
+    char PeekChar(long index);
     void CopyTo(long offset, int count, Span<char> destination);
     /// <summary>Number of break ends e with startExclusive &lt; e &lt;= endInclusive.</summary>
     long CountBreakEndsInRange(long startExclusive, long endInclusive);
@@ -73,6 +81,8 @@ internal sealed class OriginalCharBuffer : ICharBuffer
 
     public char this[long index] => _text[(int)index];
 
+    public char PeekChar(long index) => _text[(int)index];
+
     public void CopyTo(long offset, int count, Span<char> destination)
         => _text.AsSpan((int)offset, count).CopyTo(destination);
 
@@ -102,6 +112,8 @@ internal sealed class AddBuffer : ICharBuffer
     public long Length => _length;
 
     public char this[long index] => _blocks[(int)(index >> BlockShift)][(int)(index & BlockMask)];
+
+    public char PeekChar(long index) => this[index];
 
     /// <summary>Appends text and returns the start offset of the appended run.</summary>
     public long Append(ReadOnlySpan<char> text)
