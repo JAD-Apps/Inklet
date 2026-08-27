@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
@@ -21,9 +21,14 @@ internal sealed class SettingsService
         {
             _settings = ApplicationData.Current.LocalSettings;
 
-            // Migration: remove the old SessionTabs key stored in ApplicationDataContainer
-            // (limited to 8 KB) — session data is now stored in a JSON file.
-            _settings.Values.Remove("SessionTabs");
+            // One-shot migration: the pre-1.0 SessionTabs key lived in the 8 KB
+            // ApplicationDataContainer. Gate the removal behind a version stamp so
+            // launch doesn't pay a settings WRITE every run.
+            if (!_settings.Values.ContainsKey("MigrationV2"))
+            {
+                _settings.Values.Remove("SessionTabs");
+                _settings.Values["MigrationV2"] = 1;
+            }
         }
         catch (InvalidOperationException)
         {

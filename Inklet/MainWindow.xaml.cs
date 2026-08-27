@@ -86,9 +86,11 @@ public sealed partial class MainWindow : Window
 
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
-        SetWindowIcon();
         SetupCustomTitleBar();
         RestoreSettings();
+        // The window icon costs a disk probe; it only affects the taskbar/alt-tab,
+        // so set it after the first frame rather than before Activate.
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, SetWindowIcon);
         AppWindow.Closing += AppWindow_Closing;
 
         // Autosave timer is started at the END of InitialLoadAsync â€” starting it here
@@ -209,8 +211,7 @@ public sealed partial class MainWindow : Window
 
         _baseFontSize = _settings.FontSize;
         _zoomPercent = _settings.ZoomPercent;
-        ApplyFontToEditor();
-        ApplyZoom();
+        ApplyZoom(); // applies the zoom-adjusted font once and updates the status bar
     }
 
     private async Task InitialLoadAsync()
@@ -1616,8 +1617,7 @@ public sealed partial class MainWindow : Window
         Editor.SelectionChanged += Editor_SelectionChanged;
         Editor.ActualThemeChanged += (_, _) => ApplyEditorTheme();
         ApplyEditorTheme();
-        ApplyFontToEditor();
-        ApplyZoom();
+        ApplyZoom(); // one font application (SetFont resets the layout caches)
     }
 
     /// <summary>Applies the current light/dark theme colours to the Win2D editor surface.</summary>
