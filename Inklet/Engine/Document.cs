@@ -57,12 +57,12 @@ internal readonly struct LineSlice
 /// memory-mapped byte source and background indexer replace
 /// <see cref="OriginalCharBuffer"/> behind the same seam in a later phase.
 /// </summary>
-internal sealed class Document
+internal sealed partial class Document
 {
     /// <summary>Longest line slice handed out in one call; giant lines are fetched in segments.</summary>
     internal const int MaxLineSliceChars = 64 * 1024;
 
-    private readonly OriginalCharBuffer _original;
+    private readonly ICharBuffer _originalBuf;
     private readonly AddBuffer _add = new();
     private readonly UndoStack _undo = new();
     private readonly ITimeSource _clock;
@@ -73,19 +73,35 @@ internal sealed class Document
     private Document(string originalText, ITimeSource clock)
     {
         _clock = clock;
-        _original = new OriginalCharBuffer(originalText);
+        var original = new OriginalCharBuffer(originalText);
+        _originalBuf = original;
         _root = originalText.Length == 0
             ? null
-            : new PieceTreeNode(null, Piece.Create(PieceBufferKind.Original, _original, 0, originalText.Length), null);
+            : new PieceTreeNode(null, Piece.Create(PieceBufferKind.Original, original, 0, originalText.Length), null);
         var eol = LineEndingDetector.Detect(originalText);
         LineEnding = eol;
-        NewLineString = eol switch
-        {
-            LineEndingStyle.Lf => "\n",
-            LineEndingStyle.Cr => "\r",
-            _ => "\r\n", // CrLf, and Mixed resolves to CRLF (parity with FileService)
-        };
+        NewLineString = NewLineFor(eol);
     }
+
+    /// <summary>Streaming ctor: the tree starts empty and absorbs indexed segments.</summary>
+    private Document(IByteSource source, TextCodec codec, OriginalIndex index, LineEndingStyle eol)
+    {
+        _clock = SystemTimeSource.Instance;
+        _source = source;
+        _codec = codec;
+        _index = index;
+        _originalBuf = new MappedCharBuffer(source, codec, index);
+        _root = null;
+        LineEnding = eol;
+        NewLineString = NewLineFor(eol);
+    }
+
+    private static string NewLineFor(LineEndingStyle eol) => eol switch
+    {
+        LineEndingStyle.Lf => "\n",
+        LineEndingStyle.Cr => "\r",
+        _ => "\r\n", // CrLf, and Mixed resolves to CRLF (parity with FileService)
+    };
 
     public static Document CreateUntitled(string initialText = "", ITimeSource? clock = null)
         => new(initialText, clock ?? SystemTimeSource.Instance);
@@ -98,10 +114,11 @@ internal sealed class Document
 
     private PieceTreeNode? Root => Volatile.Read(ref _root);
 
-    public long Length => PieceTreeOps.CharLen(Root);
+    /// <summary>Total chars; estimated while a streamed open is still indexing.</summary>
+    public long Length => PieceTreeOps.CharLen(Root) + PendingTailChars;
 
-    /// <summary>Total lines; an empty document has one (empty) line.</summary>
-    public long LineCount => PieceTreeOps.Breaks(Root) + 1;
+    /// <summary>Total lines (empty document = 1); estimated while indexing.</summary>
+    public long LineCount => PieceTreeOps.Breaks(Root) + PendingTailBreaks + 1;
 
     public LineEndingStyle LineEnding { get; }
 
@@ -121,7 +138,7 @@ internal sealed class Document
     // ── Reads (any thread) ───────────────────────────────────────────────────
 
     private ICharBuffer BufferFor(PieceBufferKind kind)
-        => kind == PieceBufferKind.Original ? _original : _add;
+        => kind == PieceBufferKind.Original ? _originalBuf : _add;
 
     public string GetText(long offset, long length)
     {
@@ -217,6 +234,7 @@ internal sealed class Document
     /// <summary>Delete + insert as a single undo unit.</summary>
     public void Replace(long offset, long length, string text)
     {
+        GuardEditable(offset, length);
         text = ConvertNewLines(text);
         long breaksBefore = PieceTreeOps.Breaks(Root);
         var units = new List<UndoUnit>(2);
@@ -260,6 +278,20 @@ internal sealed class Document
     }
 
     // ── Internals ────────────────────────────────────────────────────────────
+
+    private void GuardEditable(long offset, long length)
+    {
+        if (offset < 0 || length < 0)
+            throw new ArgumentOutOfRangeException(nameof(offset));
+        long absorbed = AbsorbedLength;
+        if (offset + length > absorbed)
+        {
+            throw !IsFullyIndexed
+                ? new InvalidOperationException(
+                    $"Edit at [{offset}, {offset + length}) is beyond the indexed frontier ({absorbed}); wait for indexing.")
+                : new ArgumentOutOfRangeException(nameof(offset));
+        }
+    }
 
     private string ConvertNewLines(string text)
     {
@@ -309,8 +341,7 @@ internal sealed class Document
     private void InsertCore(long offset, string text, bool pushUndo)
     {
         if (text.Length == 0) return;
-        long total = Length;
-        if (offset < 0 || offset > total) throw new ArgumentOutOfRangeException(nameof(offset));
+        GuardEditable(offset, 0);
 
         long breaksBefore = PieceTreeOps.Breaks(Root);
         long addStart = _add.Append(text);
@@ -322,9 +353,7 @@ internal sealed class Document
     private void DeleteCore(long offset, long length, bool pushUndo)
     {
         if (length == 0) return;
-        long total = Length;
-        if (offset < 0 || length < 0 || offset + length > total)
-            throw new ArgumentOutOfRangeException(nameof(offset));
+        GuardEditable(offset, length);
 
         long breaksBefore = PieceTreeOps.Breaks(Root);
         var run = DeleteStructural(offset, length);
