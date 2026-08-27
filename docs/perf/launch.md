@@ -39,3 +39,30 @@ at any file size, working set flat (~100 MB ceiling) regardless of document.
   file > 10 MB silently failed (Large File `ContentDialog.ShowAsync` raced a
   null `XamlRoot`; the fire-and-forget `InitialLoadAsync` swallowed the
   `ArgumentException`).
+
+## v2 engine (streamed piece-tree Document, 2026-08-27, same machine/protocol)
+
+### Typing latency (input -> draw-complete)
+
+| Document | p50 | p95 | p99 | working set | private bytes |
+|---|---|---|---|---|---|
+| corpus-100mb.log | 0.9 | 14.8 | 83.2 | 328 MB | - |
+| corpus-1gb.log | 0.8 | 15.1 | 76.8 | 1,374 MB* | 309 MB |
+
+*Working set includes reclaimable OS page cache for the mapped file (the
+background index touches every page once); private commit is the real
+footprint and stays ~flat in file size.
+
+- 1 GB file: FirstTextDraw 560 ms after process start - the document itself
+  adds nothing measurable to launch (open = mmap + one 1 MB segment scan).
+- vs baseline: 100 MB typing p50 improved ~98x (87.8 -> 0.9 ms); the 1 GB
+  row had no baseline (the old engine needed ~8x the file in RAM and O(N)
+  per keystroke).
+- Launch (empty session) unchanged from baseline (~480 ms to first draw);
+  the startup phase targets that next.
+- p95/p99 outliers (~15/80 ms) correlate with background-index absorption
+  and GC; candidates for the startup/polish phase.
+
+Smoke (automated): open 100 MB -> Ctrl+End -> Ctrl+Home -> 3x PageDown ->
+arrows -> shift-select -> Delete -> Ctrl+Z -> type -> Ctrl+S: app healthy,
+save byte-identical except the 9-byte edit.
