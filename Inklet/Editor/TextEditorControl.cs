@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using Microsoft.Graphics.Canvas.Text;
 using Microsoft.Graphics.Canvas.UI.Xaml;
@@ -42,6 +42,9 @@ internal sealed partial class TextEditorControl : UserControl
     private float _lineHeight = 19f;
     private float _charWidth = 8f;
     private bool _metricsMeasured;
+    private bool _firstDrawMarked;
+    private bool _firstTextDrawMarked;
+    private int _pendingKeystrokeId = -1;
 
     private double _scrollY, _scrollX, _maxLineWidth;
 
@@ -296,6 +299,7 @@ internal sealed partial class TextEditorControl : UserControl
         // Tab is the only control char accepted as text; the rest (backspace, CR/LF,
         // arrows, …) are handled in KeyDown.
         if (c != '\t' && char.IsControl(c)) return;
+        _pendingKeystrokeId = Diagnostics.Perf.KeystrokeIn();
         InsertText(c.ToString());
         args.Handled = true;
     }
@@ -864,6 +868,25 @@ internal sealed partial class TextEditorControl : UserControl
             float caretX = baseX + cx;
             float caretY = (float)(PadTop + crow * _lineHeight - _scrollY);
             ds.FillRectangle(caretX, caretY, 1.6f, _lineHeight, _textColor);
+        }
+
+        if (Diagnostics.Perf.Enabled)
+        {
+            if (!_firstDrawMarked)
+            {
+                _firstDrawMarked = true;
+                Diagnostics.Perf.Mark("FirstCanvasDraw");
+            }
+            if (!_firstTextDrawMarked && _buffer.Length > 0)
+            {
+                _firstTextDrawMarked = true;
+                Diagnostics.Perf.Mark("FirstTextDraw");
+            }
+            if (_pendingKeystrokeId >= 0)
+            {
+                Diagnostics.Perf.KeystrokeDrawn(_pendingKeystrokeId);
+                _pendingKeystrokeId = -1;
+            }
         }
     }
 }

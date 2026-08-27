@@ -1,4 +1,4 @@
-using Inklet.Editor;
+﻿using Inklet.Editor;
 using Inklet.Models;
 using Inklet.Services;
 using Microsoft.UI;
@@ -95,6 +95,7 @@ public sealed partial class MainWindow : Window
         // Autosave timer is started at the END of InitialLoadAsync â€” starting it here
         // would let an early tick race the tab-population loop and observe a half-built
         // TabStrip.TabItems collection.
+        Diagnostics.Perf.Mark("WindowCtorDone");
         _ = InitialLoadAsync();
     }
 
@@ -215,7 +216,9 @@ public sealed partial class MainWindow : Window
 
     private async Task InitialLoadAsync()
     {
+        Diagnostics.Perf.Mark("InitialLoadStart");
         var tabs = _settings.SessionTabs;
+        Diagnostics.Perf.Mark("SessionReadDone");
         var activeIdx = _settings.LastActiveTabIndex;
 
         if (tabs.Count > 0)
@@ -293,13 +296,31 @@ public sealed partial class MainWindow : Window
         // just [file.txt].
         if (!string.IsNullOrWhiteSpace(_initialFilePath))
         {
+            // The binary-file and large-file prompts in LoadFileIntoSessionAsync need a live
+            // XamlRoot; at this point the window may not have completed its first layout yet,
+            // and ContentDialog.ShowAsync with a null XamlRoot throws ArgumentException
+            // ("The parameter is incorrect"), silently killing the whole load because
+            // InitialLoadAsync is fire-and-forget. Wait for the content tree to come up.
+            while (Content.XamlRoot is null)
+                await Task.Delay(15);
+
             TabSession session;
             if (ActiveSession is { FilePath: null, IsModified: false } cur)
                 session = cur;
             else
                 session = AddNewTab();
 
-            await LoadFileIntoSessionAsync(session, _initialFilePath);
+            Diagnostics.Perf.Mark("CmdFileLoadStart");
+            try
+            {
+                await LoadFileIntoSessionAsync(session, _initialFilePath);
+                Diagnostics.Perf.Mark("CmdFileLoadDone");
+            }
+            catch (Exception ex)
+            {
+                Diagnostics.Perf.Mark("CmdFileLoadFailed:" + ex.GetType().Name + ":" + ex.Message.Replace(',', ';'));
+                throw;
+            }
         }
 
         // Now that the tab population is complete, it's safe to start autosaving â€”

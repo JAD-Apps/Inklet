@@ -1,8 +1,17 @@
-# Changelog
+﻿# Changelog
 
 All notable changes to Inklet are documented in this file.
 
 ---
+
+## [Unreleased]
+
+### Fixed
+- Opening a file larger than 10 MB from the command line or a file association
+  silently failed: the "Large File" confirmation dialog was shown before the
+  window's content tree was ready (null `XamlRoot`), and the resulting
+  `ArgumentException` was swallowed by the fire-and-forget startup task. The
+  startup path now waits for the content tree before prompting.
 
 ## [1.0.9] - 2026-06-27
 

@@ -16,6 +16,7 @@ public partial class App : Application
     /// </summary>
     public App()
     {
+        Diagnostics.Perf.Mark("AppCtor");
         InitializeComponent();
     }
 
@@ -25,6 +26,15 @@ public partial class App : Application
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
         _window = new MainWindow(ResolveCommandLineFile());
+        if (Diagnostics.Perf.Enabled)
+        {
+            void OnFirstActivated(object s, WindowActivatedEventArgs e)
+            {
+                Diagnostics.Perf.Mark("Activated");
+                _window!.Activated -= OnFirstActivated;
+            }
+            _window.Activated += OnFirstActivated;
+        }
         _window.Activate();
     }
 
