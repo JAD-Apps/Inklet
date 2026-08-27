@@ -1,417 +1,147 @@
+using System.Text.Json;
+using Inklet.Engine;
 using Inklet.Models;
-using System.Text;
 
 namespace Inklet.Tests;
 
 /// <summary>
-/// Tests for <see cref="TabSession"/> and <see cref="PersistedTabData"/> covering the four
-/// session states: new empty tab, new tab with typed content, opened file without changes,
-/// and opened file with unsaved changes.
+/// Tests for <see cref="TabSession"/> (dirty state now derives from the engine
+/// document's undo position) and the v1 <see cref="PersistedTabData"/> format
+/// kept for session-file migration.
 /// </summary>
 [TestClass]
-public class SessionTests
+public sealed class SessionTests
 {
-    [TestInitialize]
-    public void Setup()
-    {
-        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
-    }
-
-    // -----------------------------------------------------------------------
-    // TabSession.IsModified
-    // -----------------------------------------------------------------------
+    // ---------------------------------------------------------------
+    // TabSession.IsModified / TabTitle (engine-document backed)
+    // ---------------------------------------------------------------
 
     [TestMethod]
-    public void WhenNewEmptyTabThenIsModifiedFalse()
+    public void WhenNewSessionThenCleanAndUntitled()
     {
-        var session = new TabSession();
-
+        using var session = new TabSession { Doc = Document.CreateUntitled() };
         Assert.IsFalse(session.IsModified);
-    }
-
-    [TestMethod]
-    public void WhenUntitledTabWithTypedContentThenIsModifiedTrue()
-    {
-        var session = new TabSession
-        {
-            Content = "hello world",
-            SavedContent = string.Empty
-        };
-
-        Assert.IsTrue(session.IsModified);
-    }
-
-    [TestMethod]
-    public void WhenOpenedFileUnchangedThenIsModifiedFalse()
-    {
-        const string diskContent = "file content";
-        var session = new TabSession
-        {
-            FilePath = @"C:\docs\notes.txt",
-            Content = diskContent,
-            SavedContent = diskContent
-        };
-
-        Assert.IsFalse(session.IsModified);
-    }
-
-    [TestMethod]
-    public void WhenOpenedFileWithUnsavedChangesThenIsModifiedTrue()
-    {
-        var session = new TabSession
-        {
-            FilePath = @"C:\docs\notes.txt",
-            Content = "edited content",
-            SavedContent = "original content"
-        };
-
-        Assert.IsTrue(session.IsModified);
-    }
-
-    // -----------------------------------------------------------------------
-    // TabSession.TabTitle
-    // -----------------------------------------------------------------------
-
-    [TestMethod]
-    public void WhenNewEmptyTabThenTabTitleIsUntitled()
-    {
-        var session = new TabSession();
-
         Assert.AreEqual("Untitled", session.TabTitle);
     }
 
     [TestMethod]
-    public void WhenUntitledModifiedThenTabTitleHasAsteriskPrefix()
+    public void WhenDocEditedThenModifiedAndStarred()
     {
-        var session = new TabSession { Content = "unsaved" };
-
+        using var session = new TabSession { Doc = Document.CreateUntitled() };
+        session.Doc!.Insert(0, "typed");
+        Assert.IsTrue(session.IsModified);
         Assert.AreEqual("*Untitled", session.TabTitle);
     }
 
     [TestMethod]
-    public void WhenSavedFileUnchangedThenTabTitleIsFileName()
+    public void WhenUndoBackToSavedThenCleanAgain()
     {
-        const string diskContent = "data";
-        var session = new TabSession
-        {
-            FilePath = @"C:\docs\notes.txt",
-            Content = diskContent,
-            SavedContent = diskContent
-        };
+        using var session = new TabSession { Doc = Document.CreateUntitled() };
+        session.Doc!.Insert(0, "typed");
+        session.Doc.Undo();
+        Assert.IsFalse(session.IsModified, "undo to the saved state flips the tab clean");
+    }
 
+    [TestMethod]
+    public void WhenSavedThenCleanWithFileName()
+    {
+        using var session = new TabSession
+        {
+            Doc = Document.FromText("content"),
+            FilePath = @"C:\docs\notes.txt",
+        };
+        session.Doc!.Insert(0, "x");
+        Assert.AreEqual("*notes.txt", session.TabTitle);
+        session.Doc.MarkSaved();
         Assert.AreEqual("notes.txt", session.TabTitle);
     }
 
     [TestMethod]
-    public void WhenSavedFileModifiedThenTabTitleHasAsteriskPrefix()
+    public void WhenRestoredDirtyThenModifiedWithoutUndoHistory()
     {
-        var session = new TabSession
-        {
-            FilePath = @"C:\docs\notes.txt",
-            Content = "changed",
-            SavedContent = "original"
-        };
-
-        Assert.AreEqual("*notes.txt", session.TabTitle);
-    }
-
-    // -----------------------------------------------------------------------
-    // Dirty flag — fast O(1) path
-    // -----------------------------------------------------------------------
-
-    [TestMethod]
-    public void WhenContentSetThenIsModifiedFlipsTrue()
-    {
-        var session = new TabSession();
-
-        session.Content = "typed";
-
+        using var session = new TabSession { Doc = Document.CreateUntitled("restored unsaved") };
+        session.Doc!.MarkRestoredDirty();
         Assert.IsTrue(session.IsModified);
+        Assert.IsFalse(session.Doc.CanUndo);
     }
 
     [TestMethod]
-    public void WhenMarkSavedThenIsModifiedFlipsFalse()
+    public void WhenDisposedThenDocumentReleased()
     {
-        var session = new TabSession { Content = "edited", SavedContent = "original" };
-        Assert.IsTrue(session.IsModified);
-
-        session.MarkSaved();
-
-        Assert.IsFalse(session.IsModified);
-        Assert.AreEqual("edited", session.SavedContent);
+        var session = new TabSession { Doc = Document.CreateUntitled("x") };
+        session.Dispose();
+        Assert.IsNull(session.Doc);
     }
 
-    [TestMethod]
-    public void WhenMarkSavedThenSubsequentEditMarksDirtyAgain()
-    {
-        var session = new TabSession { Content = "v1" };
-        session.MarkSaved();
-
-        session.Content = "v2";
-
-        Assert.IsTrue(session.IsModified);
-    }
+    // ---------------------------------------------------------------
+    // v1 PersistedTabData format (migration source - shape must not drift)
+    // ---------------------------------------------------------------
 
     [TestMethod]
-    public void WhenMarkDirtyThenIsModifiedTrue()
-    {
-        // MarkDirty is the per-keystroke hot path: it flips the dirty flag without
-        // re-reading the editor buffer (the live text is pulled into Content later).
-        var session = new TabSession();
-
-        session.MarkDirty();
-
-        Assert.IsTrue(session.IsModified);
-        Assert.AreEqual("*Untitled", session.TabTitle);
-    }
-
-    [TestMethod]
-    public void WhenMarkDirtyThenMarkSavedClearsIt()
-    {
-        var session = new TabSession { Content = "v1" };
-        session.MarkSaved();
-        Assert.IsFalse(session.IsModified);
-
-        session.MarkDirty();
-        Assert.IsTrue(session.IsModified);
-
-        // A later content sync + save round-trips the dirty flag back to clean.
-        session.Content = "v2";
-        session.MarkSaved();
-        Assert.IsFalse(session.IsModified);
-    }
-
-    [TestMethod]
-    public void WhenSameReferenceAssignedThenNoSpuriousDirty()
-    {
-        var session = new TabSession();
-        session.Content = "x";
-        session.MarkSaved();
-        var sameRef = session.Content;
-
-        session.Content = sameRef; // no-op assignment
-
-        Assert.IsFalse(session.IsModified);
-    }
-
-    [TestMethod]
-    public void WhenContentEqualsSavedByReferenceThenIsModifiedFalse()
-    {
-        // Mirrors the file-load path where Content and SavedContent receive the
-        // same string reference (the just-decoded file bytes).
-        var loaded = "from disk";
-        var session = new TabSession();
-
-        session.Content = loaded;
-        session.SavedContent = loaded;
-
-        Assert.IsFalse(session.IsModified);
-    }
-
-    // -----------------------------------------------------------------------
-    // PersistedTabData produced by the four scenarios (mirrors PersistSession)
-    // -----------------------------------------------------------------------
-
-    [TestMethod]
-    public void WhenNewEmptyTabPersistedThenDataHasNoPathAndNotDirty()
-    {
-        var session = new TabSession();
-
-        var data = BuildPersistedData(session);
-
-        Assert.IsNull(data.FilePath);
-        Assert.AreEqual(string.Empty, data.Content);
-        Assert.IsFalse(data.IsModified);
-    }
-
-    [TestMethod]
-    public void WhenUntitledTabWithContentPersistedThenDataIsDirtyAndContentPreserved()
-    {
-        var session = new TabSession { Content = "draft text" };
-
-        var data = BuildPersistedData(session);
-
-        Assert.IsNull(data.FilePath);
-        Assert.AreEqual("draft text", data.Content);
-        Assert.IsTrue(data.IsModified);
-    }
-
-    [TestMethod]
-    public void WhenOpenedFileUnchangedPersistedThenDataIsNotDirtyAndContentOmitted()
-    {
-        const string diskContent = "original";
-        var session = new TabSession
-        {
-            FilePath = @"C:\docs\notes.txt",
-            Content = diskContent,
-            SavedContent = diskContent
-        };
-
-        var data = BuildPersistedData(session);
-
-        Assert.AreEqual(@"C:\docs\notes.txt", data.FilePath);
-        Assert.IsFalse(data.IsModified);
-        // Content is intentionally empty for unmodified file-backed tabs to reduce storage
-        Assert.AreEqual(string.Empty, data.Content);
-    }
-
-    [TestMethod]
-    public void WhenOpenedFileModifiedPersistedThenDataIsDirtyAndUnsavedContentPreserved()
-    {
-        var session = new TabSession
-        {
-            FilePath = @"C:\docs\notes.txt",
-            Content = "edited",
-            SavedContent = "original"
-        };
-
-        var data = BuildPersistedData(session);
-
-        Assert.AreEqual(@"C:\docs\notes.txt", data.FilePath);
-        Assert.AreEqual("edited", data.Content);
-        Assert.IsTrue(data.IsModified);
-    }
-
-    // -----------------------------------------------------------------------
-    // Session restore — untitled/missing-file branch (else path in InitialLoadAsync)
-    // -----------------------------------------------------------------------
-
-    [TestMethod]
-    public void WhenRestoringEmptyUntitledTabThenSessionIsNotModified()
+    public void WhenV1DataSerializedThenJsonPropertyNamesStable()
     {
         var data = new PersistedTabData
         {
-            FilePath = null,
-            Content = string.Empty,
-            IsModified = false
-        };
-
-        var session = RestoreUntitledSession(data);
-
-        Assert.IsFalse(session.IsModified);
-        Assert.AreEqual(string.Empty, session.Content);
-    }
-
-    [TestMethod]
-    public void WhenRestoringUntitledTabWithContentThenSessionIsModified()
-    {
-        var data = new PersistedTabData
-        {
-            FilePath = null,
-            Content = "unsaved draft",
-            IsModified = true
-        };
-
-        var session = RestoreUntitledSession(data);
-
-        Assert.IsTrue(session.IsModified);
-        Assert.AreEqual("unsaved draft", session.Content);
-    }
-
-    [TestMethod]
-    public void WhenRestoringMissingFileWithUnsavedChangeThenSessionIsModified()
-    {
-        // File was on disk but no longer exists — we restore the last-known content.
-        var data = new PersistedTabData
-        {
-            FilePath = @"C:\deleted\file.txt",
-            Content = "last known content",
-            IsModified = true
-        };
-
-        var session = RestoreUntitledSession(data);
-
-        Assert.IsTrue(session.IsModified);
-        Assert.AreEqual("last known content", session.Content);
-    }
-
-    [TestMethod]
-    public void WhenRestoringMissingFileWithNoChangeThenSessionIsNotModified()
-    {
-        var data = new PersistedTabData
-        {
-            FilePath = @"C:\deleted\file.txt",
-            Content = "file content",
-            IsModified = false
-        };
-
-        var session = RestoreUntitledSession(data);
-
-        Assert.IsFalse(session.IsModified);
-        Assert.AreEqual("file content", session.Content);
-    }
-
-    [TestMethod]
-    public void WhenRestoringSessionThenCursorPositionIsRestored()
-    {
-        var data = new PersistedTabData
-        {
-            Content = "hello world",
+            FilePath = @"C:\f.txt",
+            Content = "body",
             IsModified = true,
-            CursorPosition = 5
+            CursorPosition = 3,
+            EncodingCodePage = 65001,
+            HasBom = true,
+            LineEnding = 1,
         };
+        var json = JsonSerializer.Serialize(data);
+        StringAssert.Contains(json, "\"path\"");
+        StringAssert.Contains(json, "\"content\"");
+        StringAssert.Contains(json, "\"dirty\"");
+        StringAssert.Contains(json, "\"cursor\"");
+        StringAssert.Contains(json, "\"encoding\"");
+        StringAssert.Contains(json, "\"bom\"");
+        StringAssert.Contains(json, "\"lineEnding\"");
 
-        var session = RestoreUntitledSession(data);
-
-        Assert.AreEqual(5, session.CursorPosition);
+        var back = JsonSerializer.Deserialize<PersistedTabData>(json)!;
+        Assert.AreEqual(data, back);
     }
 
     [TestMethod]
-    public void WhenRestoringSessionThenEncodingIsRestored()
+    public void WhenV1ArrayParsedThenRoundTrips()
     {
-        var data = new PersistedTabData
-        {
-            EncodingCodePage = 1252,
-            IsModified = false,
-            Content = string.Empty
-        };
-
-        var session = RestoreUntitledSession(data);
-
-        Assert.AreEqual(1252, session.Document.Encoding.CodePage);
+        const string v1Json = """
+            [{"path":null,"content":"unsaved text","dirty":true,"cursor":5,"encoding":65001,"bom":false,"lineEnding":0},
+             {"path":"C:\\a.txt","content":"","dirty":false,"cursor":0,"encoding":1252,"bom":false,"lineEnding":0}]
+            """;
+        var tabs = JsonSerializer.Deserialize<PersistedTabData[]>(v1Json)!;
+        Assert.HasCount(2, tabs);
+        Assert.AreEqual("unsaved text", tabs[0].Content);
+        Assert.IsTrue(tabs[0].IsModified);
+        Assert.AreEqual(@"C:\a.txt", tabs[1].FilePath);
+        Assert.AreEqual(1252, tabs[1].EncodingCodePage);
     }
 
-    // -----------------------------------------------------------------------
-    // Helpers — mirror the logic in MainWindow without requiring WinUI
-    // -----------------------------------------------------------------------
+    // ---------------------------------------------------------------
+    // v2 envelope shape (what SettingsService writes)
+    // ---------------------------------------------------------------
 
-    /// <summary>
-    /// Mirrors the PersistedTabData projection in <c>PersistSession</c>.
-    /// Content is intentionally omitted for unmodified file-backed tabs.
-    /// </summary>
-    private static PersistedTabData BuildPersistedData(TabSession s) => new()
+    [TestMethod]
+    public void WhenV2EnvelopeSerializedThenVersionTagged()
     {
-        FilePath = s.FilePath,
-        Content = (s.FilePath is not null && !s.IsModified) ? string.Empty : s.Content,
-        IsModified = s.IsModified,
-        CursorPosition = s.CursorPosition,
-        EncodingCodePage = s.Document.Encoding.CodePage,
-        HasBom = s.Document.HasBom,
-        LineEnding = (int)s.Document.LineEnding,
-    };
-
-    /// <summary>
-    /// Mirrors the untitled/missing-file restore branch in <c>InitialLoadAsync</c>.
-    /// </summary>
-    private static TabSession RestoreUntitledSession(PersistedTabData data)
-    {
-        var session = new TabSession { FilePath = data.FilePath };
-        session.Content = data.Content;
-        session.SavedContent = data.IsModified ? string.Empty : data.Content;
-        session.CursorPosition = data.CursorPosition;
-
-        Encoding enc;
-        try { enc = Encoding.GetEncoding(data.EncodingCodePage); }
-        catch { enc = Encoding.UTF8; }
-
-        session.Document = new DocumentState
+        var envelope = new Inklet.Services.SettingsService.SessionV2Envelope
         {
-            FilePath = data.FilePath,
-            Encoding = enc,
-            HasBom = data.HasBom,
-            LineEnding = (LineEndingStyle)data.LineEnding,
+            ActiveTab = 1,
+            Tabs =
+            [
+                new SessionTabState { FilePath = @"C:\big.log", CaretOffset = 42 },
+                new SessionTabState { UntitledContent = "draft", Dirty = true },
+            ],
         };
+        var json = JsonSerializer.Serialize(envelope, SessionJson.Options);
+        StringAssert.Contains(json, "\"v\":2");
+        StringAssert.Contains(json, "\"active\":1");
 
-        return session;
+        var back = JsonSerializer.Deserialize<Inklet.Services.SettingsService.SessionV2Envelope>(json, SessionJson.Options)!;
+        Assert.HasCount(2, back.Tabs);
+        Assert.AreEqual(42, back.Tabs[0].CaretOffset);
+        Assert.AreEqual("draft", back.Tabs[1].UntitledContent);
+        Assert.IsTrue(back.Tabs[1].Dirty);
     }
 }

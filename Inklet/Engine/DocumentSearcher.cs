@@ -173,7 +173,10 @@ internal sealed partial class Document
             }
         }
         _undo.PushComposite(units.ToArray());
-        RaiseChanged(offsets[0], needleLength, replacement.Length, breaksBefore);
+        // Edits are scattered document-wide: report a whole-document eviction
+        // (removed breaks = everything from the first match on).
+        RaiseChanged(offsets[0], needleLength, replacement.Length,
+            Math.Max(0, breaksBefore), Math.Max(0, PieceTreeOps.Breaks(Root)));
         return true;
     }
 

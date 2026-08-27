@@ -18,13 +18,19 @@ internal readonly struct TextChange
     public readonly long Offset;
     public readonly long RemovedLength;
     public readonly long AddedLength;
-    public readonly long LineDelta;          // break count after - before
+    public readonly long RemovedLineBreaks;  // breaks destroyed by the removal phase
+    public readonly long AddedLineBreaks;    // breaks introduced by the insertion phase
     public readonly long FirstAffectedLine;  // 0-based line containing Offset (post-edit)
 
-    public TextChange(long offset, long removed, long added, long lineDelta, long firstAffectedLine)
+    /// <summary>Break count after minus before.</summary>
+    public long LineDelta => AddedLineBreaks - RemovedLineBreaks;
+
+    public TextChange(long offset, long removed, long added,
+        long removedLineBreaks, long addedLineBreaks, long firstAffectedLine)
     {
         Offset = offset; RemovedLength = removed; AddedLength = added;
-        LineDelta = lineDelta; FirstAffectedLine = firstAffectedLine;
+        RemovedLineBreaks = removedLineBreaks; AddedLineBreaks = addedLineBreaks;
+        FirstAffectedLine = firstAffectedLine;
     }
 }
 
@@ -241,11 +247,13 @@ internal sealed partial class Document
         GuardEditable(offset, length);
         text = ConvertNewLines(text);
         long breaksBefore = PieceTreeOps.Breaks(Root);
+        long breaksMid = breaksBefore;
         var units = new List<UndoUnit>(2);
         if (length > 0)
         {
             var run = DeleteStructural(offset, length);
             units.Add(new DeleteUnit { Offset = offset, Run = run });
+            breaksMid = PieceTreeOps.Breaks(Root);
         }
         if (text.Length > 0)
         {
@@ -262,7 +270,9 @@ internal sealed partial class Document
         {
             _undo.PushComposite(units.ToArray());
         }
-        RaiseChanged(offset, length, text.Length, breaksBefore);
+        RaiseChanged(offset, length, text.Length,
+            Math.Max(0, breaksBefore - breaksMid),
+            Math.Max(0, PieceTreeOps.Breaks(Root) - breaksMid));
     }
 
     /// <summary>Undoes one unit; returns the caret offset to restore, or null.</summary>
@@ -461,11 +471,18 @@ internal sealed partial class Document
 
     private void RaiseChanged(long offset, long removed, long added, long breaksBefore)
     {
+        // Single-phase edit: attribute the whole delta to one side.
+        long delta = PieceTreeOps.Breaks(Root) - breaksBefore;
+        RaiseChanged(offset, removed, added, Math.Max(0, -delta), Math.Max(0, delta));
+    }
+
+    private void RaiseChanged(long offset, long removed, long added, long removedBreaks, long addedBreaks)
+    {
         Interlocked.Increment(ref _revision);
         var handler = Changed;
         if (handler is null) return;
         var root = Root;
         long line = root is null ? 0 : PieceTreeOps.CountBreakEndsUpTo(root, Math.Min(offset, PieceTreeOps.CharLen(root)), BufferFor);
-        handler(new TextChange(offset, removed, added, PieceTreeOps.Breaks(root) - breaksBefore, line));
+        handler(new TextChange(offset, removed, added, removedBreaks, addedBreaks, line));
     }
 }

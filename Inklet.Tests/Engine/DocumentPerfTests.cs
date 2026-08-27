@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Text;
 using Inklet.Engine;
 
@@ -10,6 +10,7 @@ namespace Inklet.Tests.Engine;
 /// engine fails them by orders of magnitude, which is the regression being pinned.
 /// </summary>
 [TestClass]
+[DoNotParallelize] // wall-clock assertions need a quiet process
 [TestCategory("Perf")]
 public sealed class DocumentPerfTests
 {

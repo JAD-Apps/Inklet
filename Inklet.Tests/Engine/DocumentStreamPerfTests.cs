@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Text;
 using Inklet.Engine;
 
@@ -9,6 +9,7 @@ namespace Inklet.Tests.Engine;
 /// geometry after background indexing. Uses a real 256 MB file on disk.
 /// </summary>
 [TestClass]
+[DoNotParallelize] // wall-clock assertions need a quiet process
 [TestCategory("Perf")]
 public sealed class DocumentStreamPerfTests
 {

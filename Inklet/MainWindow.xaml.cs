@@ -48,7 +48,6 @@ public sealed partial class MainWindow : Window
     ];
 
     private readonly SettingsService _settings = new();
-    private bool _suppressTextChanged;
     private int _zoomPercent = 100;
     private double _baseFontSize = 14.0;
 
@@ -217,64 +216,29 @@ public sealed partial class MainWindow : Window
     private async Task InitialLoadAsync()
     {
         Diagnostics.Perf.Mark("InitialLoadStart");
-        var tabs = _settings.SessionTabs;
+        // Session read + JSON parse run off the UI thread; the window is already
+        // visible and interactive while this completes.
+        var envelope = await Task.Run(() => _settings.LoadSessionV2());
         Diagnostics.Perf.Mark("SessionReadDone");
-        var activeIdx = _settings.LastActiveTabIndex;
 
-        if (tabs.Count > 0)
+        var lostRestores = new List<string>();
+
+        if (envelope.Tabs.Count > 0)
         {
-            // Restore persisted window state
             if (_settings.WindowMaximized && AppWindow.Presenter is OverlappedPresenter overlapped)
                 overlapped.Maximize();
             else
                 ResizeWindow((int)_settings.WindowWidth, (int)_settings.WindowHeight);
 
-            foreach (var data in tabs)
+            foreach (var state in envelope.Tabs)
             {
-                var session = new TabSession { FilePath = data.FilePath };
-
-                if (data.FilePath is not null && File.Exists(data.FilePath))
-                {
-                    // Reload file from diskâ€¦
-                    var (content, state) = await FileService.ReadFileAsync(data.FilePath);
-                    session.Document = state;
-                    var diskText = ToEditorText(content);
-
-                    if (data.IsModified)
-                    {
-                        // â€¦but show the in-progress unsaved edits, not the on-disk version
-                        session.Content = ToEditorText(data.Content);
-                        session.SavedContent = diskText;
-                    }
-                    else
-                    {
-                        // Same reference for Content and SavedContent → tab is clean.
-                        session.Content = diskText;
-                        session.SavedContent = diskText;
-                    }
-                }
-                else
-                {
-                    // Untitled or missing file â€” restore content as-is
-                    var restored = ToEditorText(data.Content);
-                    session.Content = restored;
-                    session.SavedContent = data.IsModified ? string.Empty : restored;
-                    session.Document = BuildDocumentState(data);
-                }
-
-                session.CursorPosition = data.CursorPosition;
-                if (session.FilePath is not null && File.Exists(session.FilePath))
-                    AttachFileWatcher(session);
+                var session = await RestoreTabAsync(state, lostRestores);
                 AttachTab(session);
             }
 
-            // Select the previously active tab; SelectionChanged fires SwitchToTab
-            // which loads content and restores the cursor position.
-            var clampedIdx = Math.Clamp(activeIdx, 0, TabStrip.TabItems.Count - 1);
+            var clampedIdx = Math.Clamp(envelope.ActiveTab, 0, TabStrip.TabItems.Count - 1);
             if (TabStrip.SelectedIndex == clampedIdx)
             {
-                // Already on the right index (e.g. single tab) â€” force the switch manually
-                // because SelectionChanged won't fire if the index didn't change.
                 if (TabStrip.TabItems[clampedIdx] is TabViewItem tvi)
                     SwitchToTab(tvi);
             }
@@ -285,22 +249,15 @@ public sealed partial class MainWindow : Window
         }
         else
         {
-            // No previous session â€” open at the default 800x550
             ResizeWindow(800, 550);
             AddNewTab();
         }
 
-        // Command-line file: reuse the active tab if it is a clean untitled one,
-        // otherwise open in a new tab. Without this, the common "double-click .txt to
-        // open" flow would leave the user staring at [Untitled] [file.txt] instead of
-        // just [file.txt].
+        // Command-line file: reuse the active tab if it is a clean untitled one.
         if (!string.IsNullOrWhiteSpace(_initialFilePath))
         {
-            // The binary-file and large-file prompts in LoadFileIntoSessionAsync need a live
-            // XamlRoot; at this point the window may not have completed its first layout yet,
-            // and ContentDialog.ShowAsync with a null XamlRoot throws ArgumentException
-            // ("The parameter is incorrect"), silently killing the whole load because
-            // InitialLoadAsync is fire-and-forget. Wait for the content tree to come up.
+            // The binary-file prompt needs a live XamlRoot; the window may not have
+            // completed its first layout yet (see the 1.0.9 silent-failure fix).
             while (Content.XamlRoot is null)
                 await Task.Delay(15);
 
@@ -311,26 +268,115 @@ public sealed partial class MainWindow : Window
                 session = AddNewTab();
 
             Diagnostics.Perf.Mark("CmdFileLoadStart");
-            try
-            {
-                await LoadFileIntoSessionAsync(session, _initialFilePath);
-                Diagnostics.Perf.Mark("CmdFileLoadDone");
-            }
-            catch (Exception ex)
-            {
-                Diagnostics.Perf.Mark("CmdFileLoadFailed:" + ex.GetType().Name + ":" + ex.Message.Replace(',', ';'));
-                throw;
-            }
+            await LoadFileIntoSessionAsync(session, _initialFilePath);
+            Diagnostics.Perf.Mark("CmdFileLoadDone");
         }
 
-        // Now that the tab population is complete, it's safe to start autosaving â€”
-        // any tick before this point could have iterated a half-built TabStrip.
-        StartAutosaveTimer();
+        if (lostRestores.Count > 0)
+        {
+            while (Content.XamlRoot is null) await Task.Delay(15);
+            await ShowErrorAsync("Unsaved changes not restored",
+                "These files changed on disk since the last session, so their unsaved edits could not be re-applied:\n"
+                + string.Join("\n", lostRestores));
+        }
 
-        // Focus the editor so the user can start typing immediately. Notepad does this
-        // and the absence is jarring â€” without focus the first keystroke is lost. We
-        // defer to the dispatcher so the focus call runs after the current layout pass.
+        StartAutosaveTimer();
         DispatcherQueue.TryEnqueue(() => Editor.Focus(FocusState.Programmatic));
+    }
+
+    /// <summary>
+    /// Rebuilds one tab from its captured session state. File-backed tabs open
+    /// instantly (memory-mapped view; indexing continues in the background) and
+    /// unsaved edit deltas re-apply once the file is verified unchanged.
+    /// </summary>
+    private async Task<TabSession> RestoreTabAsync(Engine.SessionTabState state, List<string> lostRestores)
+    {
+        var session = new TabSession();
+        if (state.FilePath is not null && File.Exists(state.FilePath))
+        {
+            try
+            {
+                var doc = await Engine.Document.OpenAsync(state.FilePath);
+                session.Doc = doc;
+                session.FilePath = state.FilePath;
+                session.Document = DocumentStateFrom(doc);
+                if (state.Pieces is not null)
+                {
+                    if (Engine.Document.FingerprintMatches(state))
+                    {
+                        if (doc.IsFullyIndexed) doc.ApplySessionState(state);
+                        else session.PendingSessionState = state; // applied on IndexCompleted
+                    }
+                    else
+                    {
+                        lostRestores.Add(Path.GetFileName(state.FilePath));
+                    }
+                }
+                HookDocumentEvents(session);
+                AttachFileWatcher(session);
+            }
+            catch
+            {
+                // Unreadable file: fall back to an empty untitled tab.
+                session.Doc = Engine.Document.CreateUntitled();
+                session.FilePath = null;
+            }
+        }
+        else
+        {
+            // Untitled (or the file vanished): restore content inline, v1-style.
+            session.Doc = Engine.Document.CreateUntitled(state.UntitledContent ?? string.Empty);
+            if (state.Dirty || (state.FilePath is not null && state.UntitledContent is not null))
+                session.Doc.MarkRestoredDirty();
+            session.Document = BuildDocumentState(state);
+        }
+        session.View = EditorViewState.Default with
+        {
+            Caret = state.CaretOffset,
+            Anchor2 = state.AnchorOffset,
+            Anchor = new ViewportAnchor(Math.Max(0, state.ScrollLine), 0, 0),
+        };
+        session.ShownDirty = session.IsModified;
+        return session;
+    }
+
+    /// <summary>Status-bar metadata derived from a live engine document.</summary>
+    private static DocumentState DocumentStateFrom(Engine.Document doc) => new()
+    {
+        FilePath = doc.FilePath,
+        Encoding = doc.Encoding,
+        HasBom = doc.HasBom,
+        LineEnding = doc.LineEnding,
+    };
+
+    /// <summary>
+    /// Marshals a document's background-indexing events onto the UI thread:
+    /// absorbed segments feed the editor/scrollbar, the status bar shows
+    /// progress, and pending session deltas apply on completion.
+    /// </summary>
+    private void HookDocumentEvents(TabSession session)
+    {
+        var doc = session.Doc;
+        if (doc is null || doc.IsFullyIndexed) return;
+        doc.IndexProgressChanged += _ => DispatcherQueue.TryEnqueue(() => OnDocIndexProgress(session));
+        doc.IndexCompleted += () => DispatcherQueue.TryEnqueue(() => OnDocIndexProgress(session));
+    }
+
+    private void OnDocIndexProgress(TabSession session)
+    {
+        var doc = session.Doc;
+        if (doc is null) return;
+        doc.AbsorbIndexedSegments();
+        if (doc.IsFullyIndexed && session.PendingSessionState is { } pending)
+        {
+            session.PendingSessionState = null;
+            try { doc.ApplySessionState(pending); } catch { /* deltas no longer applicable */ }
+        }
+        if (ReferenceEquals(session, ActiveSession))
+        {
+            UpdateCursorPosition();
+            RefreshDirtyIndicators(session);
+        }
     }
 
     private void ResizeWindow(int width, int height)
@@ -339,7 +385,7 @@ public sealed partial class MainWindow : Window
         catch (Exception ex) { Debug.WriteLine($"ResizeWindow({width},{height}) failed: {ex.Message}"); }
     }
 
-    private static DocumentState BuildDocumentState(PersistedTabData data)
+    private static DocumentState BuildDocumentState(Engine.SessionTabState data)
     {
         System.Text.Encoding enc;
         try { enc = System.Text.Encoding.GetEncoding(data.EncodingCodePage); }
@@ -385,7 +431,7 @@ public sealed partial class MainWindow : Window
 
     private TabSession CreateTab(string? filePath = null)
     {
-        var session = new TabSession { FilePath = filePath };
+        var session = new TabSession { FilePath = filePath, Doc = Engine.Document.CreateUntitled() };
         AttachTab(session);
         return session;
     }
@@ -417,82 +463,60 @@ public sealed partial class MainWindow : Window
     {
         if (tvi.Tag is not TabSession session) return;
 
-        _suppressTextChanged = true;
-        // session.Content may be a multi-MB file restored from the session — go through
-        // the Win32 path which bypasses WinUI's silent ~512 KB SetText truncation.
-        LoadEditorTextLarge(session.Content);
-        Editor.SetSelectionStart(Math.Min(session.CursorPosition, session.Content.Length));
-        Editor.SetSelectionLength(0);
-        _suppressTextChanged = false;
-        // The editor now mirrors session.Content; nothing pending to pull back.
-        _activeContentDirty = false;
-
+        // O(1): swap the document reference and restore this tab's view. No text
+        // moves and the incoming tab's undo history is intact.
+        Editor.Document = session.Doc;
+        Editor.RestoreViewState(session.View);
         Editor.WordWrap = _settings.WordWrap;
         UpdateTitle(session);
         UpdateStatusBar(session);
         Editor.Focus(FocusState.Programmatic);
     }
 
+    /// <summary>Captures the active tab's caret/selection/scroll into its session.</summary>
     private void SaveCurrentTabState()
     {
         if (ActiveSession is not { } session) return;
-        // Only re-read the editor when a keystroke actually left Content stale. Reading
-        // unconditionally would hand the Content setter a fresh string reference and
-        // flip a clean tab to "modified" on every autosave / tab switch (a latent bug
-        // in the previous always-read code). The stream read bypasses WinUI's ~512 KB
-        // GetText cap for large files.
-        if (_activeContentDirty)
-        {
-            session.Content = GetEditorTextLarge();
-            _activeContentDirty = false;
-        }
-        session.CursorPosition = Editor.GetSelectionStart();
+        if (ReferenceEquals(Editor.Document, session.Doc))
+            session.View = Editor.CaptureViewState();
     }
 
-    private void PersistSession()
-    {
-        var tabData = BuildSessionSnapshot();
-        _settings.SessionTabs = tabData;
-        _settings.LastActiveTabIndex = TabStrip.SelectedIndex;
-    }
+    private void PersistSession() => _ = PersistSessionAsync();
 
     /// <summary>
-    /// Async counterpart to <see cref="PersistSession"/> used by the window-close path.
-    /// The session JSON write happens on a thread-pool thread so the UI thread is not
-    /// blocked when persisting many unsaved buffers.
-    /// Returns false if the write failed â€” the close handler uses this to prompt the
-    /// user before tearing down the window with potentially unsaved data.
+    /// Persists the session. Snapshot capture is cheap on the UI thread (edit
+    /// deltas, never file content); serialisation and I/O run off-thread.
+    /// Returns false if the write failed - the close handler uses this to prompt
+    /// before tearing down the window with unsaved data.
     /// </summary>
     private async Task<bool> PersistSessionAsync()
     {
-        var tabData = BuildSessionSnapshot();
+        var envelope = BuildSessionSnapshot();
         _settings.LastActiveTabIndex = TabStrip.SelectedIndex;
-        return await _settings.SaveSessionTabsAsync(tabData).ConfigureAwait(false);
+        return await _settings.SaveSessionV2Async(envelope).ConfigureAwait(false);
     }
 
-    private List<PersistedTabData> BuildSessionSnapshot()
+    private SettingsService.SessionV2Envelope BuildSessionSnapshot()
     {
-        // Always flush the active tab's cursor position before writing â€” Editor_TextChanged
-        // keeps session.Content live, but CursorPosition is only synced on tab-switch.
         SaveCurrentTabState();
 
-        return TabStrip.TabItems
-            .OfType<TabViewItem>()
-            .Select(tvi => tvi.Tag is TabSession s ? new PersistedTabData
-            {
-                FilePath = s.FilePath,
-                // Only persist content for untitled tabs or tabs with unsaved changes;
-                // unmodified file-backed tabs will be reloaded from disk on next launch.
-                Content = (s.FilePath is not null && !s.IsModified) ? string.Empty : s.Content,
-                IsModified = s.IsModified,
-                CursorPosition = s.CursorPosition,
-                EncodingCodePage = s.Document.Encoding.CodePage,
-                HasBom = s.Document.HasBom,
-                LineEnding = (int)s.Document.LineEnding,
-            } : null)
-            .Where(d => d is not null)
-            .Select(d => d!)
-            .ToList();
+        var envelope = new SettingsService.SessionV2Envelope
+        {
+            ActiveTab = TabStrip.SelectedIndex,
+        };
+        foreach (var tvi in TabStrip.TabItems.OfType<TabViewItem>())
+        {
+            if (tvi.Tag is not TabSession s || s.Doc is null) continue;
+            // A dirty streamed doc that is still indexing cannot capture deltas yet;
+            // fall back to its pending (restored) state so nothing is dropped.
+            var state = s.Doc.CaptureSessionState() ?? s.PendingSessionState;
+            if (state is null) continue;
+            state.CaretOffset = s.View.Caret;
+            state.AnchorOffset = s.View.Anchor2;
+            state.ScrollLine = s.View.Anchor.Line;
+            envelope.Tabs.Add(state);
+        }
+        return envelope;
     }
 
     // XAML event handlers
@@ -529,16 +553,16 @@ public sealed partial class MainWindow : Window
 
         if (TabStrip.TabItems.Count == 1)
         {
-            // Last tab â€” reset rather than close
+            // Last tab - reset rather than close.
             DetachFileWatcher(session);
-            _suppressTextChanged = true;
-            Editor.SetPlainText(string.Empty);
-            _suppressTextChanged = false;
-            session.Content = string.Empty;
-            session.SavedContent = string.Empty;
+            var oldDoc = session.Doc;
+            session.Doc = Engine.Document.CreateUntitled();
             session.FilePath = null;
-            session.CursorPosition = 0;
             session.Document = new DocumentState();
+            session.View = EditorViewState.Default;
+            session.ShownDirty = false;
+            Editor.Document = session.Doc;
+            oldDoc?.Dispose();
             RefreshTabHeader(session);
             UpdateTitle(session);
             UpdateStatusBar(session);
@@ -547,9 +571,10 @@ public sealed partial class MainWindow : Window
         }
         else
         {
-            DetachFileWatcher(session);
+            if (ReferenceEquals(Editor.Document, session.Doc)) Editor.Document = null;
             TabStrip.TabItems.Remove(tab);
             InvalidateTabLayout();
+            session.Dispose(); // watcher + document (releases the file mapping)
             // Persist remaining tabs immediately so a mid-session close is not lost
             // if the app terminates unexpectedly before the next graceful shutdown.
             PersistSession();
@@ -558,19 +583,12 @@ public sealed partial class MainWindow : Window
 
     private void TabStrip_SelectionChanged(object _, SelectionChangedEventArgs e)
     {
-        // Persist state leaving the old tab. Only pull its text back if a keystroke left
-        // it stale (otherwise a clean tab would be flipped to "modified" by the re-read).
+        // Capture the outgoing tab's caret/scroll; its text needs no syncing -
+        // the document IS the state.
         foreach (var removed in e.RemovedItems.OfType<TabViewItem>())
         {
-            if (removed.Tag is TabSession old)
-            {
-                if (_activeContentDirty)
-                {
-                    old.Content = GetEditorTextLarge();
-                    _activeContentDirty = false;
-                }
-                old.CursorPosition = Editor.GetSelectionStart();
-            }
+            if (removed.Tag is TabSession old && ReferenceEquals(Editor.Document, old.Doc))
+                old.View = Editor.CaptureViewState();
         }
 
         if (TabStrip.SelectedItem is TabViewItem tvi)
@@ -841,15 +859,14 @@ public sealed partial class MainWindow : Window
         if (ActiveSession is not { } session) return;
 
         DetachFileWatcher(session);
-        _suppressTextChanged = true;
-        Editor.SetPlainText(string.Empty);
-        _suppressTextChanged = false;
-
-        session.Content = string.Empty;
-        session.SavedContent = string.Empty;
+        var oldDoc = session.Doc;
+        session.Doc = Engine.Document.CreateUntitled();
         session.FilePath = null;
         session.Document = new DocumentState();
-        session.CursorPosition = 0;
+        session.View = EditorViewState.Default;
+        session.ShownDirty = false;
+        Editor.Document = session.Doc;
+        oldDoc?.Dispose();
 
         RefreshTabHeader(session);
         UpdateTitle(session);
@@ -899,7 +916,7 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            // Warn on binary files before attempting to load
+            // Warn on binary files before opening.
             if (FileService.IsBinaryFile(filePath))
             {
                 var dialog = new ContentDialog
@@ -915,46 +932,26 @@ public sealed partial class MainWindow : Window
                 if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
             }
 
-            var fileSize = FileService.GetFileSize(filePath);
-            if (fileSize > FileService.LargeFileThreshold)
-            {
-                var dialog = new ContentDialog
-                {
-                    Title = "Large File",
-                    Content = $"This file is {fileSize / (1024 * 1024):N0} MB. Loading may take a moment.",
-                    PrimaryButtonText = "Open",
-                    CloseButtonText = "Cancel",
-                    DefaultButton = ContentDialogButton.Primary,
-                    XamlRoot = Content.XamlRoot
-                };
-                if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-            }
-
-            var (content, state) = await FileService.ReadFileAsync(filePath);
-            // Hold content in the editor's bare-CR convention so the cached copy shares
-            // one offset space with the control (see ToEditorText). Same reference for
-            // Content and SavedContent keeps the freshly-opened tab clean.
-            var editorText = ToEditorText(content);
-            session.Content = editorText;
-            session.SavedContent = editorText;
+            // No "large file" warning any more: the document opens as a memory-mapped
+            // view with the first screen available immediately, whatever the size.
+            var doc = await Engine.Document.OpenAsync(filePath);
+            var oldDoc = session.Doc;
+            session.Doc = doc;
             session.FilePath = filePath;
-            session.Document = state;
-            session.CursorPosition = 0;
-
+            session.Document = DocumentStateFrom(doc);
+            session.View = EditorViewState.Default;
+            session.ShownDirty = false;
+            HookDocumentEvents(session);
             AttachFileWatcher(session);
             RefreshTabHeader(session);
 
-            // Only update the editor if this session is active
-            if (ActiveSession == session)
+            if (ReferenceEquals(ActiveSession, session))
             {
-                _suppressTextChanged = true;
-                // Use the stream path so WinUI's TextDocument.SetText doesn't truncate
-                // large files at ~512 KB.
-                LoadEditorTextLarge(editorText);
-                _suppressTextChanged = false;
+                Editor.Document = doc;
                 UpdateTitle(session);
                 UpdateStatusBar(session);
             }
+            oldDoc?.Dispose();
         }
         catch (Exception ex)
         {
@@ -1017,31 +1014,18 @@ public sealed partial class MainWindow : Window
 
     private async Task<bool> SaveSessionAsync(TabSession session)
     {
-        // Pull any un-synced keystrokes into Content before writing it to disk.
-        EnsureActiveContentSynced();
-
+        if (session.Doc is null) return false;
         if (session.FilePath is null) return await SaveAsSessionAsync(session);
 
         try
         {
-            // Tell the watcher to ignore our own write â€” otherwise the user gets
-            // a "file changed externally" prompt every time they save. We arm
-            // suppression both before AND after the write: the FileSystemWatcher
-            // echo can arrive at either moment depending on the disk (slow disks
-            // flush after WriteAllTextAsync returns, antivirus scans the file
-            // moments later).
+            // Suppress the watcher's echo of our own write, before AND after - the
+            // FileSystemWatcher event can arrive at either moment.
+            session.Watcher?.SuppressNextChange();
+            await session.Doc.SaveAsync();
             session.Watcher?.SuppressNextChange();
 
-            await FileService.WriteFileAsync(
-                session.FilePath, session.Content,
-                session.Document.Encoding, session.Document.HasBom,
-                session.Document.LineEnding);
-
-            session.Watcher?.SuppressNextChange();
-
-            session.MarkSaved();
-            RefreshTabHeader(session);
-            UpdateTitle(session);
+            RefreshDirtyIndicators(session);
             return true;
         }
         catch (Exception ex)
@@ -1053,8 +1037,7 @@ public sealed partial class MainWindow : Window
 
     private async Task<bool> SaveAsSessionAsync(TabSession session)
     {
-        // Pull any un-synced keystrokes into Content before writing it to disk.
-        EnsureActiveContentSynced();
+        if (session.Doc is null) return false;
 
         var picker = new FileSavePicker();
         InitializeWithWindow(picker);
@@ -1068,19 +1051,14 @@ public sealed partial class MainWindow : Window
 
         try
         {
+            session.Watcher?.SuppressNextChange();
+            await session.Doc.SaveAsync(new Engine.SaveOptions { TargetPath = file.Path });
             session.FilePath = file.Path;
-            session.Document = session.Document with { FilePath = file.Path };
+            session.Document = DocumentStateFrom(session.Doc) with { FilePath = file.Path };
 
-            await FileService.WriteFileAsync(
-                file.Path, session.Content,
-                session.Document.Encoding, session.Document.HasBom,
-                session.Document.LineEnding);
-
-            session.MarkSaved();
-            // Save As changes the watched path â€” re-attach to the new location.
+            // Save As changes the watched path - re-attach to the new location.
             AttachFileWatcher(session);
-            RefreshTabHeader(session);
-            UpdateTitle(session);
+            RefreshDirtyIndicators(session);
             UpdateStatusBar(session);
             return true;
         }
@@ -1109,27 +1087,10 @@ public sealed partial class MainWindow : Window
     private void MenuSelectAll_Click(object _, RoutedEventArgs _e) => Editor.DocumentSelectAll();
 
     private void MenuDelete_Click(object _, RoutedEventArgs _e)
-    {
-        if (Editor.GetSelectionLength() > 0)
-        {
-            var start = Editor.GetSelectionStart();
-            var text = GetEditorTextLarge();
-            LoadEditorTextLarge(string.Concat(text.AsSpan(0, start), text.AsSpan(start + Editor.GetSelectionLength())));
-            Editor.SetSelectionStart(start);
-        }
-    }
+        => Editor.DeleteSelection();
 
     private void MenuTimeDate_Click(object _, RoutedEventArgs _e)
-    {
-        var timeDate = DateTime.Now.ToString("h:mm tt M/d/yyyy");
-        var start = Editor.GetSelectionStart();
-        var text = GetEditorTextLarge();
-        LoadEditorTextLarge(string.Concat(
-            text.AsSpan(0, start),
-            timeDate,
-            text.AsSpan(start + Editor.GetSelectionLength())));
-        Editor.SetSelectionStart(start + timeDate.Length);
-    }
+        => Editor.InsertAtCaret(DateTime.Now.ToString("h:mm tt M/d/yyyy"));
 
     #endregion
 
@@ -1142,11 +1103,9 @@ public sealed partial class MainWindow : Window
 
     private async void MenuGoTo_Click(object _, RoutedEventArgs _e)
     {
-        // Refresh the cached buffer so the line index (and the line count shown in the
-        // prompt) reflects any un-synced keystrokes.
-        EnsureActiveContentSynced();
-        var lineCount = ActiveSession?.Lines.LineCount ?? 1;
-        var input = new TextBox { PlaceholderText = $"Line number (1-{lineCount})" };
+        var lineCount = Editor.LineCount;
+        var approx = Editor.IsLineCountExact ? "" : "~";
+        var input = new TextBox { PlaceholderText = $"Line number (1-{approx}{lineCount})" };
         var dialog = new ContentDialog
         {
             Title = "Go To Line",
@@ -1157,9 +1116,9 @@ public sealed partial class MainWindow : Window
             XamlRoot = Content.XamlRoot
         };
         if (await dialog.ShowAsync() == ContentDialogResult.Primary &&
-            int.TryParse(input.Text, out int target) && target >= 1 && target <= lineCount)
+            long.TryParse(input.Text, out long target) && target >= 1 && target <= lineCount)
         {
-            GoToLine(target);
+            Editor.GoToLine(target);
         }
     }
 
@@ -1167,9 +1126,12 @@ public sealed partial class MainWindow : Window
     {
         FindReplaceBar.Visibility = Visibility.Visible;
         ReplacePanel.Visibility = showReplace ? Visibility.Visible : Visibility.Collapsed;
-        if (Editor.GetSelectedText().Length > 0 && !Editor.GetSelectedText().Contains('\n'))
+        // Prefill from a short single-line selection only (fetch once, bounded).
+        if (Editor.SelectionLength is > 0 and <= 1024)
         {
-            FindTextBox.Text = Editor.GetSelectedText();
+            var selected = Editor.GetSelectedText();
+            if (!selected.Contains('\n') && !selected.Contains('\r'))
+                FindTextBox.Text = selected;
         }
         FindTextBox.Focus(FocusState.Programmatic);
         FindTextBox.SelectAll();
@@ -1177,6 +1139,7 @@ public sealed partial class MainWindow : Window
 
     private void CloseFindBar_Click(object _, RoutedEventArgs _e)
     {
+        _findCts?.Cancel();
         FindReplaceBar.Visibility = Visibility.Collapsed;
         Editor.Focus(FocusState.Programmatic);
     }
@@ -1186,6 +1149,7 @@ public sealed partial class MainWindow : Window
         if (e.Key == Windows.System.VirtualKey.Enter) { FindNext(); e.Handled = true; }
         else if (e.Key == Windows.System.VirtualKey.Escape)
         {
+            _findCts?.Cancel();
             FindReplaceBar.Visibility = Visibility.Collapsed;
             Editor.Focus(FocusState.Programmatic);
             e.Handled = true;
@@ -1195,92 +1159,87 @@ public sealed partial class MainWindow : Window
     private void FindNext_Click(object _, RoutedEventArgs _e) => FindNext();
     private void FindPrev_Click(object _, RoutedEventArgs _e) => FindPrevious();
 
+    // One find at a time: a new request cancels the previous scan.
+    private System.Threading.CancellationTokenSource? _findCts;
+
+    private async void FindNext() => await RunFindAsync(backward: false);
+    private async void FindPrevious() => await RunFindAsync(backward: true);
+
     /// <summary>
-    /// Returns the editor's text for Find/Replace. Syncs the active session's cached
-    /// Content first (cheap no-op unless a keystroke left it stale), so searches run
-    /// against the current text without re-materialising it on every keystroke.
+    /// Streams a search over the engine snapshot off the UI thread - the editor
+    /// stays interactive however large the document is.
     /// </summary>
-    private string GetEditorText()
+    private async Task RunFindAsync(bool backward)
     {
-        EnsureActiveContentSynced();
-        return ActiveSession?.Content ?? GetEditorTextLarge();
-    }
-
-    private void FindNext()
-    {
+        var doc = ActiveSession?.Doc;
         var needle = FindTextBox.Text;
-        if (string.IsNullOrEmpty(needle)) return;
+        if (doc is null || string.IsNullOrEmpty(needle)) return;
 
-        var haystack = GetEditorText();
-        var cmp = FindMatchCase.IsChecked == true ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
-        var start = Editor.GetSelectionStart() + Editor.GetSelectionLength();
+        _findCts?.Cancel();
+        _findCts = new System.Threading.CancellationTokenSource();
+        var ct = _findCts.Token;
 
-        var idx = haystack.IndexOf(needle, start, cmp);
-        if (idx < 0) idx = haystack.IndexOf(needle, 0, cmp);
-        if (idx >= 0)
+        var query = new Engine.FindQuery
         {
-            Editor.SetSelectionStart(idx);
-            Editor.SetSelectionLength(needle.Length);
-            Editor.Focus(FocusState.Programmatic);
+            Needle = needle,
+            MatchCase = FindMatchCase.IsChecked == true,
+            Backward = backward,
+            StartOffset = backward
+                ? Math.Max(0, Editor.SelectionStart - 1)
+                : Editor.SelectionStart + Editor.SelectionLength,
+        };
+        try
+        {
+            var hit = await doc.FindNextAsync(query, ct);
+            if (ct.IsCancellationRequested) return;
+            if (hit is { } m)
+            {
+                Editor.SetSelection(m.Offset, m.Length);
+                Editor.Focus(FocusState.Programmatic);
+            }
         }
+        catch (OperationCanceledException) { }
     }
 
-    private void FindPrevious()
+    private async void Replace_Click(object _, RoutedEventArgs _e)
     {
+        var doc = ActiveSession?.Doc;
+        if (doc is null || string.IsNullOrEmpty(FindTextBox.Text)) return;
+        var cmp = FindMatchCase.IsChecked == true ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
+        if (Editor.SelectionLength > 0 && Editor.SelectionLength <= 64 * 1024
+            && Editor.GetSelectedText().Equals(FindTextBox.Text, cmp))
+        {
+            long start = Editor.SelectionStart;
+            // One engine edit: a single undo unit, history preserved.
+            doc.Replace(start, Editor.SelectionLength, ReplaceTextBox.Text);
+            Editor.SetSelection(start + ReplaceTextBox.Text.Length, 0);
+        }
+        await RunFindAsync(backward: false);
+    }
+
+    private async void ReplaceAll_Click(object _, RoutedEventArgs _e)
+    {
+        var doc = ActiveSession?.Doc;
         var needle = FindTextBox.Text;
-        if (string.IsNullOrEmpty(needle)) return;
+        if (doc is null || string.IsNullOrEmpty(needle)) return;
 
-        var haystack = GetEditorText();
-        var cmp = FindMatchCase.IsChecked == true ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
-        var end = Editor.GetSelectionStart();
-        if (end <= 0) end = haystack.Length;
-
-        var idx = haystack.LastIndexOf(needle, end - 1, cmp);
-        if (idx < 0 && haystack.Length > 0)
-            idx = haystack.LastIndexOf(needle, haystack.Length - 1, cmp);
-        if (idx >= 0)
+        _findCts?.Cancel();
+        _findCts = new System.Threading.CancellationTokenSource();
+        var ct = _findCts.Token;
+        try
         {
-            Editor.SetSelectionStart(idx);
-            Editor.SetSelectionLength(needle.Length);
-            Editor.Focus(FocusState.Programmatic);
+            // Collect on a background thread, apply on the UI thread as one undo
+            // unit; retry once if an edit slipped in between.
+            for (int attempt = 0; attempt < 2; attempt++)
+            {
+                var (offsets, revision) = await doc.CollectMatchesAsync(
+                    needle, FindMatchCase.IsChecked == true, ct);
+                if (ct.IsCancellationRequested) return;
+                if (doc.TryReplaceAll(offsets, revision, needle.Length, ReplaceTextBox.Text))
+                    break;
+            }
         }
-    }
-
-    private void Replace_Click(object _, RoutedEventArgs _e)
-    {
-        if (string.IsNullOrEmpty(FindTextBox.Text)) return;
-        var cmp = FindMatchCase.IsChecked == true ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
-        if (Editor.GetSelectedText().Equals(FindTextBox.Text, cmp))
-        {
-            var start = Editor.GetSelectionStart();
-            var t = GetEditorText();
-            LoadEditorTextLarge(string.Concat(t.AsSpan(0, start), ReplaceTextBox.Text, t.AsSpan(start + Editor.GetSelectionLength())));
-            Editor.SetSelectionStart(start + ReplaceTextBox.Text.Length);
-        }
-        FindNext();
-    }
-
-    private void ReplaceAll_Click(object _, RoutedEventArgs _e)
-    {
-        var needle = FindTextBox.Text;
-        if (string.IsNullOrEmpty(needle)) return;
-
-        // Use Ordinal comparisons to match FindNext/FindPrevious â€” the previous
-        // CurrentCulture choice meant "Ä°" matched differently in find vs replace-all.
-        var cmp = FindMatchCase.IsChecked == true ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
-
-        var haystack = GetEditorText();
-        var newText = haystack.Replace(needle, ReplaceTextBox.Text, cmp);
-        if (!ReferenceEquals(newText, haystack)) LoadEditorTextLarge(newText);
-    }
-
-    private void GoToLine(int lineNumber)
-    {
-        if (ActiveSession is not { } session) return;
-
-        Editor.SetSelectionStart(session.Lines.GetOffset(lineNumber));
-        Editor.SetSelectionLength(0);
-        Editor.Focus(FocusState.Programmatic);
+        catch (OperationCanceledException) { }
     }
 
     #endregion
@@ -1468,9 +1427,19 @@ public sealed partial class MainWindow : Window
         var session = ActiveSession;
         if (session is null) return;
 
-        // Win32 read so a multi-MB document prints in full, not just the first 512 KB.
-        var text = GetEditorTextLarge();
+        var doc = session.Doc;
+        if (doc is null) return;
         var fileName = session.FilePath ?? "Untitled";
+
+        // The print service streams logical lines straight from the engine (its
+        // reads are snapshot-based and thread-safe), so printing holds O(1) text
+        // in memory regardless of document size.
+        IEnumerable<string> DocumentLines()
+        {
+            long count = doc.LineCount;
+            for (long line = 0; line < count && line <= doc.IndexedLineCountFloor; line++)
+                yield return doc.GetLine(line).Text.ToString();
+        }
         var setup = LoadPrintPageSettings();
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
 
@@ -1484,7 +1453,7 @@ public sealed partial class MainWindow : Window
                 try
                 {
                     var svc = new PrintService(
-                        text,
+                        DocumentLines,
                         fileName,
                         _settings.FontFamily,
                         (float)_settings.FontSize,
@@ -1636,10 +1605,6 @@ public sealed partial class MainWindow : Window
 
     #region Editor Events
 
-    // Set when a keystroke marks the active session's cached Content stale; it is pulled
-    // into Content on demand (EnsureActiveContentSynced) rather than re-read each keystroke.
-    private bool _activeContentDirty;
-
     /// <summary>
     /// Wires the editor's change events, applies the themed colours and font, and tracks
     /// light/dark theme switches.
@@ -1672,43 +1637,22 @@ public sealed partial class MainWindow : Window
         catch (Exception ex) { Debug.WriteLine($"ApplyEditorTheme failed: {ex.Message}"); }
     }
 
-    /// <summary>Replaces the editor content. The Win2D editor renders documents of any size.</summary>
-    private void LoadEditorTextLarge(string text) => Editor.SetText(text);
-
-    /// <summary>Pulls the editor text into the active session, only when an edit left it stale.</summary>
-    private void EnsureActiveContentSynced()
-    {
-        if (!_activeContentDirty) return;
-        if (ActiveSession is { } session)
-            session.Content = Editor.GetText();
-        _activeContentDirty = false;
-    }
-
-    /// <summary>Returns the editor's full text (LF line endings; normalised to the file's style on save).</summary>
-    private string GetEditorTextLarge() => Editor.GetText();
-
-    /// <summary>
-    /// Converts incoming text to the editor's LF line-ending convention. The editor holds
-    /// LF breaks so Find/Go To/Ln-Col share one offset space; saves re-normalise to the
-    /// document's detected style via <see cref="FileService.WriteFileAsync"/>.
-    /// </summary>
-    private static string ToEditorText(string? text)
-        => LineEndingDetector.Normalize(text ?? string.Empty, LineEndingStyle.Lf);
-
     private void Editor_TextChanged(object? _, EventArgs _e)
     {
-        if (_suppressTextChanged) return;
-        if (ActiveSession is not { } session) return;
+        // Per keystroke this is O(1): dirty state comes straight from the engine's
+        // undo position; the header/title refresh only on actual transitions
+        // (including undo-back-to-saved flipping the tab clean again).
+        if (ActiveSession is { } session) RefreshDirtyIndicators(session);
+    }
 
-        // O(1) per keystroke: flag the cached Content stale (materialised on demand) and
-        // flip the dirty state; refresh the tab header only on the clean-to-dirty transition.
-        _activeContentDirty = true;
-        if (!session.IsModified)
-        {
-            session.MarkDirty();
-            RefreshTabHeader(session);
-            UpdateTitle(session);
-        }
+    /// <summary>Refreshes the tab header/title when the dirty state actually changed.</summary>
+    private void RefreshDirtyIndicators(TabSession session)
+    {
+        bool dirty = session.IsModified;
+        if (dirty == session.ShownDirty) return;
+        session.ShownDirty = dirty;
+        RefreshTabHeader(session);
+        UpdateTitle(session);
     }
 
     private void Editor_SelectionChanged(object? _, EventArgs _e) => UpdateCursorPosition();
@@ -1766,16 +1710,19 @@ public sealed partial class MainWindow : Window
 
     private void UpdateCursorPosition()
     {
-        if (ActiveSession is null)
+        var doc = ActiveSession?.Doc;
+        if (doc is null)
         {
             StatusBarPosition.Text = "Ln 1, Col 1";
             return;
         }
 
-        // The Win2D editor owns the caret and its line index, so this is O(1) and needs
-        // no document materialisation — cursor movement stays cheap even in huge files.
+        // O(log n) from the engine's line index - no document materialisation.
         var (line, col) = Editor.CaretLineColumn;
-        StatusBarPosition.Text = $"Ln {line}, Col {col}";
+        string position = $"Ln {line + 1}, Col {col + 1}";
+        if (!doc.IsFullyIndexed)
+            position += $"  \u00b7  Indexing {doc.IndexProgress:P0}";
+        StatusBarPosition.Text = position;
     }
 
     #endregion

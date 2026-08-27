@@ -212,6 +212,80 @@ internal sealed class SettingsService
         }
     }
 
+    // ── Session schema v2 (edit deltas; see Inklet.Engine.SessionTabState) ────
+
+    /// <summary>Envelope for the v2 session file.</summary>
+    internal sealed class SessionV2Envelope
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("v")] public int Version { get; set; } = 2;
+        [System.Text.Json.Serialization.JsonPropertyName("active")] public int ActiveTab { get; set; }
+        [System.Text.Json.Serialization.JsonPropertyName("tabs")] public List<Engine.SessionTabState> Tabs { get; set; } = [];
+    }
+
+    /// <summary>
+    /// Loads the session, migrating a v1 file (a bare PersistedTabData array) on
+    /// the fly: v1 untitled/dirty tabs carry full content, which maps onto the
+    /// v2 untitled-content field so nothing is lost across the upgrade.
+    /// </summary>
+    internal SessionV2Envelope LoadSessionV2()
+    {
+        try
+        {
+            var path = GetSessionFilePath();
+            if (path is null || !File.Exists(path)) return new SessionV2Envelope();
+            var json = File.ReadAllText(path);
+            if (string.IsNullOrWhiteSpace(json)) return new SessionV2Envelope();
+
+            if (json.TrimStart().StartsWith('{'))
+            {
+                return JsonSerializer.Deserialize<SessionV2Envelope>(json, Engine.SessionJson.Options)
+                       ?? new SessionV2Envelope();
+            }
+
+            // v1 array: migrate.
+            var v1 = JsonSerializer.Deserialize<PersistedTabData[]>(json) ?? [];
+            var envelope = new SessionV2Envelope { ActiveTab = LastActiveTabIndex };
+            foreach (var tab in v1)
+            {
+                envelope.Tabs.Add(new Engine.SessionTabState
+                {
+                    FilePath = tab.FilePath,
+                    EncodingCodePage = tab.EncodingCodePage,
+                    HasBom = tab.HasBom,
+                    LineEnding = tab.LineEnding,
+                    CaretOffset = tab.CursorPosition,
+                    AnchorOffset = tab.CursorPosition,
+                    // Dirty v1 tabs restored as untitled-with-content (v1 parity for
+                    // its own orphan path); clean file tabs reload from disk.
+                    UntitledContent = tab.FilePath is null || tab.IsModified ? tab.Content : null,
+                    Pieces = null,
+                });
+            }
+            return envelope;
+        }
+        catch { return new SessionV2Envelope(); }
+    }
+
+    /// <summary>Persists the v2 session; serialisation and I/O run off the calling thread.</summary>
+    internal async Task<bool> SaveSessionV2Async(SessionV2Envelope envelope)
+    {
+        try
+        {
+            var path = GetSessionFilePath();
+            if (path is null) return false;
+            await Task.Run(async () =>
+            {
+                var json = JsonSerializer.Serialize(envelope, Engine.SessionJson.Options);
+                await WriteSessionFileAtomicAsync(path, json).ConfigureAwait(false);
+            }).ConfigureAwait(false);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     /// <summary>
     /// Async counterpart to <see cref="WriteSessionFileAtomic"/>. The rename is still
     /// synchronous (it's already atomic on NTFS); only the bytes-to-disk part is awaited.

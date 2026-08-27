@@ -22,6 +22,7 @@ internal sealed class SessionTabState
     [JsonPropertyName("caret")] public long CaretOffset { get; set; }
     [JsonPropertyName("anchor")] public long AnchorOffset { get; set; }
     [JsonPropertyName("scroll")] public long ScrollLine { get; set; }
+    [JsonPropertyName("dirty")] public bool Dirty { get; set; }
 
     /// <summary>Deltas for a dirty file-backed tab; null when clean (open fresh).</summary>
     [JsonPropertyName("pieces")] public List<SessionPiece>? Pieces { get; set; }
@@ -69,6 +70,7 @@ internal sealed partial class Document
             EncodingCodePage = Encoding.CodePage,
             HasBom = HasBom,
             LineEnding = (int)LineEnding,
+            Dirty = IsDirty,
         };
 
         if (FilePath is null)
@@ -148,6 +150,12 @@ internal sealed partial class Document
         _undo.MarkUnreachableDirty();
         RaiseChanged(0, oldLength, Length, breaksBefore);
     }
+
+    /// <summary>
+    /// Marks a session-restored document dirty with no reachable saved state
+    /// (its content differs from disk but there is no undo history to return by).
+    /// </summary>
+    public void MarkRestoredDirty() => _undo.MarkUnreachableDirty();
 
     /// <summary>True when the on-disk file still matches the captured fingerprint.</summary>
     public static bool FingerprintMatches(SessionTabState state)
