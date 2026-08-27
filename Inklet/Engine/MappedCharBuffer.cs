@@ -98,6 +98,13 @@ internal sealed class MappedCharBuffer : ICharBuffer
 
     // ── Mapping and decoding ─────────────────────────────────────────────────
 
+    /// <summary>Content-byte offset of the char at `unit` (save fast path). unit may equal Length.</summary>
+    internal long ContentByteOfUnit(long unit)
+    {
+        if (unit >= Length) return _index.IndexedBytes;
+        return UnitToContentByte(unit, out _);
+    }
+
     private (Chunk Chunk, long Index) ResolveChunk(long unit)
     {
         if ((ulong)unit >= (ulong)Length)

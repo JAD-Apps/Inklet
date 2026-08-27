@@ -129,6 +129,10 @@ internal sealed partial class Document
     public bool CanUndo => _undo.CanUndo;
     public bool CanRedo => _undo.CanRedo;
 
+    /// <summary>Bumped on every mutation; cache keys and staleness checks hang off it.</summary>
+    public int Revision => Volatile.Read(ref _revision);
+    private int _revision;
+
     /// <summary>Marks the current state as the on-disk state (after save).</summary>
     public void MarkSaved() => _undo.MarkSaved();
 
@@ -457,6 +461,7 @@ internal sealed partial class Document
 
     private void RaiseChanged(long offset, long removed, long added, long breaksBefore)
     {
+        Interlocked.Increment(ref _revision);
         var handler = Changed;
         if (handler is null) return;
         var root = Root;

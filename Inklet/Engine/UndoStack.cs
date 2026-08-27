@@ -77,6 +77,12 @@ internal sealed class UndoStack
     public void SealCoalescing() => _coalesceSealed = true;
 
     /// <summary>
+    /// Marks the document dirty with no reachable saved state (session-restored
+    /// unsaved edits: content differs from disk but there is no undo history).
+    /// </summary>
+    public void MarkUnreachableDirty() => _savedReachable = false;
+
+    /// <summary>
     /// Either extends the top insert unit (contiguous in both document and add
     /// buffer, within the window) or pushes a new one. Returns true if coalesced.
     /// </summary>
