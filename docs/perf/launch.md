@@ -92,3 +92,23 @@ Root causes fixed for the during-index jank: tier-2 long[] break lists and
 128 KB decode chunks were LOH-sized (Gen2 pauses on the UI thread); every
 segment absorb decoded a fresh chunk at the moving frontier; absorbs ran one
 tree op per segment; the indexer thread competed at normal priority.
+
+## Phase 7 - packaging/runtime experiments (2026-08-27)
+
+All measured with Measure-Launch.ps1, 6 warm runs, median FirstCanvasDraw:
+
+| Variant | median (ms) | verdict |
+|---|---|---|
+| dotnet build Release (JIT, no R2R) | ~509 | previous measurement basis |
+| published, ReadyToRun | 399 | ADOPTED - the release pipeline now ships this |
+| published, R2R composite | 384 | ~4% over R2R, within noise; larger output, slower publish - not adopted |
+| .NET 10 (10.0.400-preview SDK), JIT build | 553 | slower than net8 today (preview runtime); revisit at .NET 10 GA/servicing |
+
+Found & fixed along the way: the portable release publish shipped a build
+with NO WinUI resources (PRI/XBF) - the 1.0.9 GitHub release artifact
+crashes at startup with 0xC000027B. See release.yml + the csproj
+PublishWinUIAppResources target.
+
+Remaining launch cost is fixed WinUI/XamlControlsResources init (~380 ms
+floor on this machine for the published R2R build); the deferred-menu
+XAML experiment (accelerator spike required) is the next candidate.
