@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <Version>1.0.9</Version>
     <AssemblyVersion>1.0.9.0</AssemblyVersion>
@@ -57,4 +57,21 @@
     <PublishReadyToRun Condition="'$(Configuration)' != 'Debug'">True</PublishReadyToRun>
     <PublishTrimmed>False</PublishTrimmed>
   </PropertyGroup>
+  <!-- WORKAROUND (WindowsAppSDK unpackaged publish): 'dotnet publish' omits the
+       app's own resource index (Inklet.pri) and compiled XAML (*.xbf) that the
+       build step produces, so the published exe dies at startup - 0xC000027B
+       when the framework PRIs are missing too, or a windowless hang when only
+       the app PRI is absent. Publish must also be driven so that Platform
+       applies (see release.yml: dotnet msbuild -t:Publish), or PRI generation
+       is skipped entirely. This target carries the build's resources into the
+       publish output. -->
+  <Target Name="PublishWinUIAppResources" AfterTargets="ComputeFilesToPublish">
+    <ItemGroup>
+      <_WinUIAppResource Include="$(OutputPath)$(TargetName).pri;$(OutputPath)*.xbf" />
+      <ResolvedFileToPublish Include="@(_WinUIAppResource)">
+        <RelativePath>%(_WinUIAppResource.Filename)%(_WinUIAppResource.Extension)</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
 </Project>

@@ -30,6 +30,12 @@ All notable changes to Inklet are documented in this file.
 - The caret now blinks at the system rate and idle redraws are eliminated.
 
 ### Fixed
+- The portable (non-Store) release build crashed on startup with error
+  0xC000027B: the publish pipeline silently skipped WinUI resource generation
+  and omitted the app's resource index and compiled XAML from the output. The
+  release workflow now publishes through msbuild (so the platform applies), the
+  project carries its resources into the publish output, and the workflow fails
+  fast if they are ever missing again.
 - Opening a file larger than 10 MB from the command line or a file association
   silently failed: the "Large File" confirmation dialog was shown before the
   window's content tree was ready (null `XamlRoot`), and the resulting

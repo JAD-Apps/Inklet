@@ -28,22 +28,39 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
+      # 'dotnet publish' does not apply -p:Platform on this project shape, which
+      # silently skips WinUI PRI/XBF resource generation and ships an exe that
+      # dies at startup with 0xC000027B. Driving Publish through msbuild applies
+      # the platform correctly; the csproj's PublishWinUIAppResources target then
+      # carries the app's own .pri/.xbf into the output.
       - name: Publish
         run: >
-          dotnet publish "Inklet/Inklet.csproj"
-          --configuration Release
-          --runtime win-${{ matrix.arch }}
-          --self-contained true
+          dotnet msbuild "Inklet/Inklet.csproj"
+          -t:Publish
+          -p:Configuration=Release
           -p:Platform=${{ matrix.arch }}
+          -p:RuntimeIdentifier=win-${{ matrix.arch }}
+          -p:SelfContained=true
           -p:WindowsPackageType=None
-          -p:WindowsAppSdkSelfContained=true
-          --output publish
+          -p:WindowsAppSDKSelfContained=true
+
+      - name: Verify publish output
+        shell: pwsh
+        run: |
+          $publish = "Inklet/bin/${{ matrix.arch }}/Release/net8.0-windows10.0.19041.0/win-${{ matrix.arch }}/publish"
+          if (-not (Test-Path "$publish/Inklet.exe")) { throw "missing Inklet.exe in $publish" }
+          # The resource index and compiled XAML are what the 1.0.9 release shipped
+          # without; their absence means a build that cannot start.
+          foreach ($required in 'Inklet.pri', 'Microsoft.UI.pri', 'App.xbf', 'MainWindow.xbf') {
+            if (-not (Test-Path "$publish/$required")) { throw "missing $required - the build would crash at startup" }
+          }
 
       - name: Package
         shell: pwsh
         run: |
           $tag = "${{ github.ref_name }}"
-          Compress-Archive -Path publish/* -DestinationPath "Inklet-$tag-win-${{ matrix.arch }}.zip"
+          $publish = "Inklet/bin/${{ matrix.arch }}/Release/net8.0-windows10.0.19041.0/win-${{ matrix.arch }}/publish"
+          Compress-Archive -Path "$publish/*" -DestinationPath "Inklet-$tag-win-${{ matrix.arch }}.zip"
 
       - name: Upload build
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
