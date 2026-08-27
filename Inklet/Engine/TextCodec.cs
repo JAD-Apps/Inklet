@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Text;
 
 namespace Inklet.Engine;
@@ -34,7 +34,8 @@ internal struct SegmentScan
 /// </summary>
 internal sealed class SegmentDetail
 {
-    public required long[] BreakEndUnits;      // segment-local unit offset just after each break
+    public required int[] BreakEndUnits;       // segment-local unit offset just after each break
+                                               // (int: a segment holds far fewer units than 2^31)
     public required int[] SampleUnitCum;       // cumulative units at every SampleBytes boundary
     public const int SampleBytes = 4096;
 }

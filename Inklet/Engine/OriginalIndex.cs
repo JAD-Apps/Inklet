@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Threading;
 
@@ -130,7 +130,7 @@ internal sealed class OriginalIndex
 
         // Rescan outside the lock (multiple threads may redundantly rescan; harmless).
         var detail = RescanSegment(seg);
-        long cost = detail.BreakEndUnits.Length * 8L + detail.SampleUnitCum.Length * 4L + 64;
+        long cost = detail.BreakEndUnits.Length * 4L + detail.SampleUnitCum.Length * 4L + 64;
         lock (_detailLock)
         {
             if (_detailMap.TryGetValue(seg, out var raced)) return raced.Value.Detail;
@@ -155,9 +155,11 @@ internal sealed class OriginalIndex
         var samples = new List<int>();
         var bytes = _source.GetSpan(SegmentStartByte(seg), SegmentLengthBytes(seg));
         _codec.ScanSegment(bytes, ref carry, isFinal: seg == SegmentCount - 1, breakEnds, samples);
+        var ends = new int[breakEnds.Count];
+        for (int i = 0; i < ends.Length; i++) ends[i] = (int)breakEnds[i];
         return new SegmentDetail
         {
-            BreakEndUnits = breakEnds.ToArray(),
+            BreakEndUnits = ends,
             SampleUnitCum = samples.ToArray(),
         };
     }
