@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Text;
 using System.Threading;
@@ -175,24 +175,42 @@ internal sealed partial class Document : IDisposable
         }
         _indexCts = new CancellationTokenSource();
         var token = _indexCts.Token;
-        _indexTask = Task.Run(() =>
+        var tcs = new TaskCompletionSource();
+        _indexTask = tcs.Task;
+        // A dedicated below-normal thread: the scan saturates memory bandwidth for
+        // seconds on huge files, and it must lose every contest with the UI thread.
+        var thread = new Thread(() =>
         {
-            var localCarry = carry;
-            var lastReport = Environment.TickCount64;
-            while (!index.IsComplete)
+            try
             {
-                token.ThrowIfCancellationRequested();
-                index.ScanNextSegment(ref localCarry);
-                RefreshTailEstimate();
-                long now = Environment.TickCount64;
-                if (now - lastReport >= 100 || index.IsComplete)
+                var localCarry = carry;
+                var lastReport = Environment.TickCount64;
+                while (!index.IsComplete)
                 {
-                    lastReport = now;
-                    IndexProgressChanged?.Invoke(IndexProgress);
+                    if (token.IsCancellationRequested) { tcs.TrySetCanceled(token); return; }
+                    index.ScanNextSegment(ref localCarry);
+                    RefreshTailEstimate();
+                    long now = Environment.TickCount64;
+                    if (now - lastReport >= 250 || index.IsComplete)
+                    {
+                        lastReport = now;
+                        IndexProgressChanged?.Invoke(IndexProgress);
+                    }
                 }
+                FinishIndexing();
+                tcs.TrySetResult();
             }
-            FinishIndexing();
-        }, token);
+            catch (Exception ex)
+            {
+                tcs.TrySetException(ex);
+            }
+        })
+        {
+            IsBackground = true,
+            Priority = ThreadPriority.BelowNormal,
+            Name = "Inklet.Indexer",
+        };
+        thread.Start();
     }
 
     private void FinishIndexing()
@@ -212,21 +230,20 @@ internal sealed partial class Document : IDisposable
         var buf = _originalBuf as MappedCharBuffer;
         if (index is null || buf is null) return;
 
+        // Absorb ALL newly indexed segments as ONE contiguous piece append - a
+        // single O(log p) tree operation per call, however many segments the
+        // background scan completed since the last marshal.
         int completed = index.CompletedSegments;
-        while (_absorbedSegments < completed)
+        if (_absorbedSegments < completed)
         {
-            int seg = _absorbedSegments;
-            long segStartUnit = index.UnitsBeforeSegment(seg);
-            long segEndUnit = seg == completed - 1 && seg == index.CompletedSegments - 1
-                ? index.IndexedUnits
-                : index.UnitsBeforeSegment(seg + 1);
-            long segUnits = segEndUnit - segStartUnit;
-            if (segUnits > 0)
+            long startUnit = index.UnitsBeforeSegment(_absorbedSegments);
+            long endUnit = index.UnitsBeforeSegment(completed);
+            if (endUnit > startUnit)
             {
-                var piece = Piece.Create(PieceBufferKind.Original, buf, segStartUnit, segUnits);
+                var piece = Piece.Create(PieceBufferKind.Original, buf, startUnit, endUnit - startUnit);
                 AppendOriginalPiece(piece);
             }
-            _absorbedSegments = seg + 1;
+            _absorbedSegments = completed;
         }
         RefreshTailEstimate();
     }
