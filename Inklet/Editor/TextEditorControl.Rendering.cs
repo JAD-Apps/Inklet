@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using Inklet.Engine;
 using Microsoft.Graphics.Canvas.Text;
@@ -285,6 +285,7 @@ internal sealed partial class TextEditorControl
     {
         var doc = _doc;
         if (doc is null) return (0, 0, 0);
+        offset = Math.Clamp(offset, 0, doc.Length); // defence: never throw from a display path
         var (line, col) = doc.GetLineColumn(offset);
         var entry = GetLayout(line);
         if (entry is null) return (line, 0, 0);

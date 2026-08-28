@@ -4,6 +4,20 @@ All notable changes to Inklet are documented in this file.
 
 ---
 
+## [2.0.1] - 2026-08-28
+
+### Fixed
+- The app crashed when pressing Backspace (or Delete) at the end of the
+  document: the engine's change notification fires before the editor
+  repositions its caret, and the momentarily out-of-range caret made a
+  geometry lookup throw inside a XAML callback, killing the process with
+  a stowed exception (0xC000027B). Caret positions are now clamped at the
+  change boundary and in every display path.
+
+### Added
+- Unhandled exceptions are now logged to %TEMP%\inklet-crash.log before the
+  process dies, so future crash reports carry a usable stack.
+
 ## [2.0.0] - 2026-08-28
 
 ### Changed
