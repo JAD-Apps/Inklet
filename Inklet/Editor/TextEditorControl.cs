@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using Inklet.Engine;
 using Microsoft.Graphics.Canvas.Text;
 using Microsoft.Graphics.Canvas.UI.Xaml;
@@ -162,6 +162,16 @@ internal sealed partial class TextEditorControl : UserControl
 
     private void OnDocChanged(TextChange change)
     {
+        // The engine raises Changed synchronously from inside the mutation, BEFORE
+        // the edit site has repositioned _caret/_anchor - a delete at the end of
+        // the document briefly leaves them past the new length. Anything below
+        // (and any draw this triggers) must see in-range positions, or geometry
+        // lookups throw inside a XAML callback and take the process down with a
+        // stowed exception (0xC000027B).
+        long len = _doc?.Length ?? 0;
+        _caret = Math.Clamp(_caret, 0, len);
+        _anchor = Math.Clamp(_anchor, 0, len);
+
         _lastChangeForIme = change;
         ApplyChangeToLayoutCache(change);
         // Keep the view anchored to the same content when lines shift above it.
@@ -199,7 +209,7 @@ internal sealed partial class TextEditorControl : UserControl
     public long SelectionLength => Math.Abs(_caret - _anchor);
 
     public (long Line, long Column) CaretLineColumn
-        => _doc is null ? (0, 0) : _doc.GetLineColumn(_caret);
+        => _doc is null ? (0, 0) : _doc.GetLineColumn(Math.Clamp(_caret, 0, _doc.Length));
 
     public long LineCount => _doc?.LineCount ?? 1;
     public bool IsLineCountExact => _doc?.IsLineCountExact ?? true;

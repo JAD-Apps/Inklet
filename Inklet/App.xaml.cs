@@ -18,6 +18,26 @@ public partial class App : Application
     {
         Diagnostics.Perf.Mark("AppCtor");
         InitializeComponent();
+
+        // Crash forensics: stowed exceptions kill a WinUI app with 0xC000027B and
+        // no managed stack anywhere. Log every route to %TEMP% before dying.
+        UnhandledException += (_, e) =>
+            CrashLog("XamlUnhandled", e.Exception, e.Message);
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+            CrashLog("AppDomainUnhandled", e.ExceptionObject as Exception, null);
+        System.Threading.Tasks.TaskScheduler.UnobservedTaskException += (_, e) =>
+            CrashLog("UnobservedTask", e.Exception, null);
+    }
+
+    private static void CrashLog(string source, Exception? ex, string? message)
+    {
+        try
+        {
+            var path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "inklet-crash.log");
+            System.IO.File.AppendAllText(path,
+                $"[{DateTime.Now:HH:mm:ss.fff}] {source}: {message}\n{ex}\n---\n");
+        }
+        catch { }
     }
 
     /// <summary>
