@@ -4,7 +4,7 @@ All notable changes to Inklet are documented in this file.
 
 ---
 
-## [Unreleased]
+## [2.0.0] - 2026-08-28
 
 ### Changed
 - Ground-up text engine rewrite for large files: documents are now
