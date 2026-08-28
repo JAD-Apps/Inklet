@@ -1,4 +1,4 @@
-# Inklet
+﻿# Inklet
 
 [![CI](https://github.com/JAD-Apps/Inklet/actions/workflows/ci.yml/badge.svg)](https://github.com/JAD-Apps/Inklet/actions/workflows/ci.yml)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D4?logo=windows&logoColor=white)
@@ -11,11 +11,11 @@
 <img src="docs/media/inklet-main.png" alt="Inklet with three documents open as tabs, the status bar reporting caret position, line ending and encoding for the active file" width="900">
 </p>
 
-**Status:** released and actively developed · **Latest:** v1.0.9 · **Requires:** Windows 10 1809 (build 17763) or later
+**Status:** released and actively developed · **Latest:** v2.0.1 · **Requires:** Windows 10 1809 (build 17763) or later
 
 A lightweight, modern Notepad clone for Windows built with WinUI 3 and .NET 8.
 
-Inklet faithfully recreates the classic Windows 10 Notepad experience with modern WinUI 3 styling, Mica backdrop, and system theme support — while staying as light and fast as possible.
+Inklet recreates the classic Notepad experience with modern WinUI 3 styling, Mica backdrop, and system theme support — on top of a text engine built for files of any size. Version 2.0 rewrote the engine from the ground up: documents are memory-mapped and indexed in the background, so gigabyte-sized files open instantly, typing stays under a millisecond at any size, and memory stays flat.
 
 ![Inklet](Inklet.png)
 
@@ -50,9 +50,9 @@ Grab the latest portable build from [Releases](https://github.com/JAD-Apps/Inkle
 - **Time/Date** — Insert current timestamp (F5)
 
 ### Tabs & Session
-- **Multi-tab editing** — Any number of tabs open simultaneously
-- **Session persistence** — All tab content, cursor position, encoding, and line endings are automatically saved on close and restored on next launch (including unsaved content in untitled tabs)
-- **Tab headers** — `*` prefix indicates unsaved changes
+- **Multi-tab editing** — Any number of tabs open simultaneously; switching tabs is instant and each tab keeps its own undo history
+- **Session persistence** — Open files, cursor positions and unsaved work are restored on next launch. File-backed tabs persist *edit deltas* rather than full text, so a gigabyte file with a few edits stores in about a kilobyte
+- **Tab headers** — `*` prefix indicates unsaved changes; undoing back to your last save clears it
 
 ### Format
 - **Word Wrap** — Toggle word wrap on/off
@@ -79,15 +79,24 @@ Grab the latest portable build from [Releases](https://github.com/JAD-Apps/Inkle
 
 ![Scrolling continuously through a 242 MB, four-million-line log file with the mouse wheel; lines redraw without stalling as the viewport moves](docs/media/inklet-large-file.gif)
 
-- Instant startup
-- Documents of any length — a custom Win2D editor draws only the lines visible in the viewport, so files of any size display in full and stay responsive (the built-in WinUI text controls stop rendering large documents)
-- Responsive typing in large files — the editor never re-serialises the whole document on a keystroke; the cached copy is refreshed only when needed (save, find, go to)
-- Minimal memory footprint
+The 2.0 engine holds documents as a piece tree over a memory-mapped file — the
+file is never fully loaded, and every interactive operation is proportional to
+the viewport, not the document. Measured on the 64-bit build
+(see `docs/perf/launch.md` for protocols and full results):
+
+- **Open**: a 10 GB, 113-million-line log shows its first page ~60 ms after the document opens; a background index makes line counts, Go To and search exact within seconds (progress in the status bar)
+- **Typing**: p50 under 1 ms whether the file is 1 KB or 10 GB
+- **Navigation**: Ctrl+End across 113 million lines in ~60 ms; Go To line 50,000,000 is instant
+- **Memory**: ~150–300 MB of private memory regardless of file size
+- **Saving**: atomic (temp file + swap) and byte-exact — unedited regions are copied back identically, mixed line endings preserved; a 10 GB save is limited only by disk speed
+- **Find & Replace**: runs in the background over an immutable snapshot; the window never freezes, and Replace All is a single undo step
+- Correct text handling everywhere: CJK, emoji, tabs and proportional fonts position exactly in hit-testing, selection and caret placement
+- IME (East-Asian composition) input via `CoreTextEditContext`, composing and committing inline at the caret
 - Mica backdrop behind the title bar and tabs
 
-- IME (East-Asian composition) input via `CoreTextEditContext`, so an active IME composes and commits inline at the caret
-
-> Not yet implemented on the new editor surface: screen-reader (UIA) accessibility — a planned follow-up.
+> Notes: the 32-bit (x86) build cannot memory-map large files and is limited to
+> 256 MB per file. Not yet implemented: screen-reader (UIA) accessibility — a
+> planned follow-up.
 
 ### File Associations
 - Registers as an "Open With" handler for common text formats: `.txt`, `.log`, `.ini`, `.cfg`, `.md`, `.xml`, `.json`, `.csv`, `.yaml`, `.yml`
@@ -103,13 +112,19 @@ Grab the latest portable build from [Releases](https://github.com/JAD-Apps/Inkle
 2. Set **Inklet (Package)** as the startup project
 3. Build and run (F5)
 
-> Default editor font size is 12 pt (Consolas).
+> Default editor font is Consolas 14 pt.
 
 ## Testing
 
 ```bash
-dotnet test Inklet.Tests
+dotnet test Inklet.Tests -c Debug -p:Platform=x64
 ```
+
+The default run (~210 tests) includes randomised oracle equivalence tests,
+byte-identity save round-trips, and performance guards against a generated
+256 MB corpus. An opt-in 8 GB tier runs with `INKLET_HUGE_TESTS=1` and
+`--filter "TestCategory=HugeFiles"`. Perf scripts for the real app live in
+`Scripts/` (`Measure-Launch.ps1`, `Measure-Typing.ps1`, `New-TestCorpus.ps1`).
 
 ## License
 
