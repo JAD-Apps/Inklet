@@ -4,6 +4,20 @@ All notable changes to Inklet are documented in this file.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- Copying or cutting text crashed the app instead of completing or refusing
+  gracefully: the WinRT clipboard API (`Clipboard.SetContent`) fails with
+  0x800401F0 from the packaged window even for small strings, and the
+  unhandled exception killed the process. The copy path now writes through
+  the Win32 clipboard (with brief retries while another app holds it), a
+  selection too large for the clipboard shows a polite dialog instead of
+  crashing or silently doing nothing, and Cut only removes the text once it
+  has actually reached the clipboard. Copying ~100 million characters from a
+  100 MB document now works; the memory peak while building the clipboard
+  text was also halved (exact-size single allocation).
+
 ## [2.0.1] - 2026-08-28
 
 ### Fixed

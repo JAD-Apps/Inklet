@@ -1,6 +1,7 @@
-using System;
+﻿using System;
 using Inklet.Engine;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Windows.System;
 
@@ -200,49 +201,205 @@ internal sealed partial class TextEditorControl
 
     // ── Clipboard ────────────────────────────────────────────────────────────
 
-    /// <summary>Copies the selection with CRLF endings, built in a single pass.</summary>
-    private void CopySelection()
+    /// <summary>
+    /// Copies the selection with CRLF endings. Returns true only when the text
+    /// actually reached the clipboard - every failure mode (selection too large,
+    /// out of memory building the string, the OS clipboard refusing the payload)
+    /// surfaces as a polite dialog instead of an unhandled exception, which in a
+    /// packaged WinUI app is process death (this is exactly how 2.0.1 died on
+    /// Ctrl+X of a huge selection: Clipboard.SetContent threw 0x800401F0).
+    /// </summary>
+    private bool CopySelection()
     {
         var doc = _doc;
-        if (doc is null || SelectionLength == 0) return;
-        if (SelectionLength > MaxClipboardChars) return; // guarded upstream by the menu too
+        if (doc is null || SelectionLength == 0) return false;
+        if (SelectionLength > MaxClipboardChars)
+        {
+            ShowClipboardNotice(
+                $"This selection is {SelectionLength / (1024 * 1024)} million characters — too large for the Windows clipboard. " +
+                "Copy a smaller range, or use Save As to export the document.");
+            return false;
+        }
 
         long start = SelectionStart, length = SelectionLength;
-        var sb = new System.Text.StringBuilder((int)Math.Min(length + length / 16, int.MaxValue - 64));
-        const int Chunk = 64 * 1024;
-        long done = 0;
-        bool pendingCr = false; // a CR seen, undecided whether it heads a CRLF
-        while (done < length)
+        string text;
+        try
         {
-            int take = (int)Math.Min(Chunk, length - done);
-            string part = doc.GetText(start + done, take);
-            foreach (char c in part)
+            text = BuildClipboardText(doc, start, length);
+        }
+        catch (OutOfMemoryException)
+        {
+            ShowClipboardNotice("There isn't enough memory to copy a selection this large.");
+            return false;
+        }
+
+        // Write through the Win32 clipboard, not WinRT Clipboard.SetContent - the
+        // WinRT API fails with CO_E_NOTINITIALIZED (0x800401F0) from this packaged
+        // WinUI window even for tiny strings, and that exception is what used to
+        // kill the app on Ctrl+C/Ctrl+X. The Win32 path is what the rest of the
+        // OS uses and behaves.
+        if (!Win32Clipboard.TrySetText(_windowHwnd, text))
+        {
+            ShowClipboardNotice(
+                "Windows couldn't accept this text onto the clipboard. " +
+                "It may be too large, or another app is holding the clipboard — try again in a moment.");
+            return false;
+        }
+        return true;
+    }
+
+    /// <summary>Minimal Win32 clipboard writer (CF_UNICODETEXT) with brief open-retries.</summary>
+    private static class Win32Clipboard
+    {
+        [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+        private static extern bool OpenClipboard(IntPtr hWndNewOwner);
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool CloseClipboard();
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool EmptyClipboard();
+        [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+        private static extern IntPtr SetClipboardData(uint uFormat, IntPtr hMem);
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr GlobalAlloc(uint uFlags, UIntPtr dwBytes);
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr GlobalLock(IntPtr hMem);
+        [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+        private static extern bool GlobalUnlock(IntPtr hMem);
+        [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+        private static extern IntPtr GlobalFree(IntPtr hMem);
+
+        private const uint CF_UNICODETEXT = 13;
+        private const uint GMEM_MOVEABLE = 0x0002;
+
+        public static unsafe bool TrySetText(IntPtr ownerHwnd, string text)
+        {
+            // The clipboard is a single shared lock; another process can hold it
+            // for a moment (clipboard history, RDP, sync tools). Retry briefly.
+            bool opened = false;
+            for (int attempt = 0; attempt < 10 && !(opened = OpenClipboard(ownerHwnd)); attempt++)
+                System.Threading.Thread.Sleep(30);
+            if (!opened) return false;
+
+            IntPtr hMem = IntPtr.Zero;
+            try
             {
+                long bytes = ((long)text.Length + 1) * sizeof(char);
+                hMem = GlobalAlloc(GMEM_MOVEABLE, (UIntPtr)bytes);
+                if (hMem == IntPtr.Zero) return false;
+                var dst = (char*)GlobalLock(hMem);
+                if (dst is null) return false;
+                text.AsSpan().CopyTo(new Span<char>(dst, text.Length));
+                dst[text.Length] = '\0';
+                GlobalUnlock(hMem);
+
+                if (!EmptyClipboard()) return false;
+                if (SetClipboardData(CF_UNICODETEXT, hMem) == IntPtr.Zero) return false;
+                hMem = IntPtr.Zero; // ownership transferred to the system
+                return true;
+            }
+            catch (OutOfMemoryException)
+            {
+                return false;
+            }
+            finally
+            {
+                if (hMem != IntPtr.Zero) GlobalFree(hMem);
+                CloseClipboard();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Materialises the selection with CRLF endings in ONE exactly-sized
+    /// allocation: a counting pass sizes the string, a second pass fills it.
+    /// (The previous StringBuilder approach held ~2x the text at peak.)
+    /// </summary>
+    private static string BuildClipboardText(Engine.Document doc, long start, long length)
+    {
+        const int Chunk = 256 * 1024;
+        var buf = new char[(int)Math.Min(Chunk, length)];
+
+        // Pass 1: converted length = length + (number of lone LF or lone CR breaks).
+        long extra = 0;
+        bool pendingCr = false;
+        for (long done = 0; done < length; )
+        {
+            int take = (int)Math.Min(buf.Length, length - done);
+            doc.CopyTo(start + done, take, buf);
+            for (int i = 0; i < take; i++)
+            {
+                char c = buf[i];
                 if (pendingCr)
                 {
-                    sb.Append("\r\n");
                     pendingCr = false;
-                    if (c == '\n') continue; // the pair's own LF
+                    if (c == '\n') { done += 0; }   // CRLF pair: no growth
+                    else extra++;                    // lone CR grew by one
                 }
+                else if (c == '\n') extra++;         // lone LF grows by one
                 if (c == '\r') pendingCr = true;
-                else if (c == '\n') sb.Append("\r\n");
-                else sb.Append(c);
             }
             done += take;
         }
-        if (pendingCr) sb.Append("\r\n");
+        if (pendingCr) extra++;
 
-        var pkg = new Windows.ApplicationModel.DataTransfer.DataPackage
-        { RequestedOperation = Windows.ApplicationModel.DataTransfer.DataPackageOperation.Copy };
-        pkg.SetText(sb.ToString());
-        Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(pkg);
+        // Pass 2: fill the exact-size string.
+        return string.Create((int)(length + extra), (doc, start, length), static (span, state) =>
+        {
+            var (d, s, len) = state;
+            var chunk = new char[(int)Math.Min(Chunk, len)];
+            int outPos = 0;
+            bool pending = false;
+            for (long done = 0; done < len; )
+            {
+                int take = (int)Math.Min(chunk.Length, len - done);
+                d.CopyTo(s + done, take, chunk);
+                for (int i = 0; i < take; i++)
+                {
+                    char c = chunk[i];
+                    if (pending)
+                    {
+                        span[outPos++] = '\r';
+                        span[outPos++] = '\n';
+                        pending = false;
+                        if (c == '\n') continue;
+                    }
+                    if (c == '\r') pending = true;
+                    else if (c == '\n') { span[outPos++] = '\r'; span[outPos++] = '\n'; }
+                    else span[outPos++] = c;
+                }
+                done += take;
+            }
+            if (pending) { span[outPos++] = '\r'; span[outPos++] = '\n'; }
+        });
+    }
+
+    /// <summary>Fire-and-forget notice dialog; never throws back into the caller.</summary>
+    private async void ShowClipboardNotice(string message)
+    {
+        try
+        {
+            if (XamlRoot is null) return;
+            await new ContentDialog
+            {
+                Title = "Clipboard",
+                Content = message,
+                CloseButtonText = "OK",
+                XamlRoot = XamlRoot,
+            }.ShowAsync();
+        }
+        catch
+        {
+            // A dialog already open, or the window tearing down - nothing to do.
+        }
     }
 
     private void CutSelection()
     {
         if (SelectionLength == 0) return;
-        CopySelection();
-        DeleteRange(SelectionStart, SelectionLength);
+        // Only remove the text once it has definitely reached the clipboard;
+        // a failed copy must never eat the selection.
+        if (CopySelection())
+            DeleteRange(SelectionStart, SelectionLength);
     }
 
     public async System.Threading.Tasks.Task PasteAsync()

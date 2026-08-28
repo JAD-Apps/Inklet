@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Threading;
 using Inklet.Models;
@@ -162,6 +162,16 @@ internal sealed partial class Document
     }
 
     public char CharAt(long offset) => PieceTreeOps.CharAt(Root, offset, BufferFor);
+
+    /// <summary>Copies a bounded range into a caller-owned buffer (no string allocation).</summary>
+    public void CopyTo(long offset, int count, Span<char> destination)
+    {
+        var root = Root;
+        long total = PieceTreeOps.CharLen(root);
+        if (offset < 0 || count < 0 || offset + count > total)
+            throw new ArgumentOutOfRangeException(nameof(offset));
+        PieceTreeOps.CopyTo(root, offset, count, destination, BufferFor);
+    }
 
     /// <summary>0-based (line, column) of a char offset. Columns count UTF-16 units.</summary>
     public (long Line, long Column) GetLineColumn(long offset)
