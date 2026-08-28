@@ -1,11 +1,16 @@
 using System;
 using System.Text.Json.Serialization;
+using Inklet.Editor;
+using Inklet.Engine;
 using Inklet.Services;
 
 namespace Inklet.Models;
 
 /// <summary>
-/// Flat, JSON-serializable snapshot of a tab saved at session close.
+/// Flat, JSON-serializable snapshot of a tab, schema v1. Retained ONLY so old
+/// session files can be migrated; new sessions persist
+/// <see cref="Inklet.Engine.SessionTabState"/> (schema v2, edit deltas instead
+/// of full content for file-backed tabs).
 /// </summary>
 public sealed record PersistedTabData
 {
@@ -39,64 +44,30 @@ public sealed record PersistedTabData
 }
 
 /// <summary>
-/// Holds the full runtime state for a single editor tab.
+/// Runtime state for a single editor tab. The tab OWNS its engine document -
+/// switching tabs swaps the document reference into the editor (no text moves,
+/// undo history and dirty state live with the document), and the view state
+/// (caret/selection/scroll) is captured here across switches.
 /// </summary>
-public sealed class TabSession
+public sealed class TabSession : IDisposable
 {
     /// <summary>File path on disk, or null for untitled tabs.</summary>
     public string? FilePath { get; set; }
 
-    private string _content = string.Empty;
-    private string _savedContent = string.Empty;
-    private bool _isDirty;
+    /// <summary>The engine document behind this tab.</summary>
+    internal Document? Doc { get; set; }
 
     /// <summary>
-    /// Current text content of the tab. Setting this stamps the dirty flag in O(1)
-    /// — the previous implementation did a full O(N) string equality on every
-    /// <see cref="IsModified"/> read, called per-keystroke from the tab title refresh.
+    /// Session deltas waiting to be applied once the document finishes indexing
+    /// (restored dirty tabs over large files), or null.
     /// </summary>
-    public string Content
-    {
-        get => _content;
-        set
-        {
-            // Reference-equal updates are no-ops (e.g. assigning a captured snapshot
-            // back to itself). Anything else marks the tab dirty; like Notepad we don't
-            // try to detect "user typed and undid back to saved" — that pessimisation
-            // would re-introduce the per-keystroke O(N) compare.
-            if (ReferenceEquals(_content, value)) return;
-            _content = value;
-            _isDirty = !ReferenceEquals(_content, _savedContent);
-            Lines.Invalidate(_content);
-        }
-    }
+    internal SessionTabState? PendingSessionState { get; set; }
 
-    /// <summary>
-    /// Content as it was when last saved. Setting this clears the dirty flag iff the
-    /// new value is the same reference as the current Content; otherwise it just
-    /// records the baseline. Prefer <see cref="MarkSaved"/> in save paths.
-    /// </summary>
-    public string SavedContent
-    {
-        get => _savedContent;
-        set
-        {
-            _savedContent = value;
-            _isDirty = !ReferenceEquals(_content, _savedContent);
-        }
-    }
+    /// <summary>Caret/selection/scroll captured when the tab was last active.</summary>
+    internal EditorViewState View { get; set; } = EditorViewState.Default;
 
-    /// <summary>Cursor position within the content.</summary>
-    public int CursorPosition { get; set; }
-
-    /// <summary>Document metadata (encoding, line ending, etc.).</summary>
+    /// <summary>Document metadata for the status bar (encoding, line ending).</summary>
     public DocumentState Document { get; set; } = new();
-
-    /// <summary>
-    /// Per-tab cached line-start index for the editor's current text. Owned by the
-    /// tab so that switching away and back doesn't re-scan the whole document.
-    /// </summary>
-    internal LineIndex Lines { get; } = new();
 
     /// <summary>
     /// Per-tab watcher for external file modifications. Null for untitled tabs.
@@ -105,31 +76,27 @@ public sealed class TabSession
     internal FileChangeWatcher? Watcher { get; set; }
 
     /// <summary>
-    /// Whether the tab has unsaved changes. O(1) — see <see cref="Content"/>.
+    /// The dirty state the tab header currently shows; MainWindow refreshes the
+    /// header only when <see cref="IsModified"/> departs from this.
     /// </summary>
-    public bool IsModified => _isDirty;
+    internal bool ShownDirty { get; set; }
 
     /// <summary>
-    /// Flags the tab dirty without re-reading the editor buffer. Used on the
-    /// per-keystroke hot path, where materialising the whole document just to flip the
-    /// dirty flag would be wasteful; the live text is pulled into <see cref="Content"/>
-    /// on demand (e.g. on save, find, or tab switch).
+    /// Whether the tab has unsaved changes. Derived from the document's undo
+    /// position vs its saved mark, which restores the classic "undo back to the
+    /// saved state leaves the tab clean" behaviour.
     /// </summary>
-    public void MarkDirty() => _isDirty = true;
-
-    /// <summary>
-    /// Marks the current content as saved. Use this after a successful write rather
-    /// than assigning <c>SavedContent = Content</c> — the former is intent-revealing
-    /// and the latter requires the caller to know the dirty flag will reset because
-    /// the references match.
-    /// </summary>
-    public void MarkSaved()
-    {
-        _savedContent = _content;
-        _isDirty = false;
-    }
+    public bool IsModified => Doc?.IsDirty ?? false;
 
     /// <summary>Label shown on the tab strip.</summary>
-    public string TabTitle => (_isDirty ? "*" : "") +
+    public string TabTitle => (IsModified ? "*" : "") +
                                (FilePath is null ? "Untitled" : System.IO.Path.GetFileName(FilePath));
+
+    public void Dispose()
+    {
+        Watcher?.Dispose();
+        Watcher = null;
+        Doc?.Dispose();
+        Doc = null;
+    }
 }

@@ -1,8 +1,10 @@
-using Inklet.Services;
+﻿using Inklet.Services;
 
 namespace Inklet.Tests;
 
 [TestClass]
+[DoNotParallelize] // debounce-window timing: parallel disk load stretches the 20 ms
+                   // inter-write sleeps past the 250 ms debounce and splits the callback
 public class FileChangeWatcherTests
 {
     private string _testDir = null!;

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Threading;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
@@ -26,6 +26,7 @@ public static class Program
     [MTAThread]
     private static void Main(string[] args)
     {
+        Diagnostics.Perf.Mark("AppMain");
         ComWrappersSupport.InitializeComWrappers();
         Application.Start(p =>
         {

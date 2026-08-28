@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Printing;
@@ -115,7 +115,7 @@ internal sealed class PrintService
     // -----------------------------------------------------------------------
     // Construction parameters
     // -----------------------------------------------------------------------
-    private readonly string _text;
+    private readonly Func<IEnumerable<string>> _lineSource;
     private readonly string _fileName;
     private readonly string _fontFamilyName;
     private readonly float  _fontSize;
@@ -126,11 +126,17 @@ internal sealed class PrintService
     // -----------------------------------------------------------------------
     // Per-job state (threaded through PrintPage callbacks)
     // -----------------------------------------------------------------------
-    private List<string>? _wrappedLines;
+    private IEnumerator<string>? _wrapEnumerator;   // pass-2 streaming body rows
+    private int _wrappedTotal = -1;                 // pass-1 row count (for &P)
+    private string? _pendingRow;                    // row pulled but not yet drawn
+    private bool _exhausted;
     private int _currentLine;
     private int _totalPages;
+    private readonly Dictionary<string, float> _wordWidths = new(StringComparer.Ordinal);
 
-    /// <param name="text">Text to print.</param>
+    /// <param name="lineSource">Factory for the document's logical lines (no terminators).
+    /// Enumerated twice: once to paginate, once to render - each pass streams and
+    /// holds O(1) lines in memory, so arbitrarily large documents print flat.</param>
     /// <param name="fileName">Displayed via the <c>&amp;f</c> token in header/footer.</param>
     /// <param name="fontFamilyName">Editor font family name.</param>
     /// <param name="fontSize">Base font size in points (not zoom-adjusted).</param>
@@ -138,7 +144,7 @@ internal sealed class PrintService
     /// <param name="italic">Whether the editor font is italic.</param>
     /// <param name="pageSetup">Margin / header / footer / paper settings.</param>
     internal PrintService(
-        string text,
+        Func<IEnumerable<string>> lineSource,
         string fileName,
         string fontFamilyName,
         float  fontSize,
@@ -146,7 +152,7 @@ internal sealed class PrintService
         bool   italic,
         PrintPageSettings pageSetup)
     {
-        _text          = text;
+        _lineSource    = lineSource;
         _fileName      = fileName;
         _fontFamilyName = fontFamilyName;
         _fontSize      = Math.Max(6f, fontSize);
@@ -243,7 +249,10 @@ internal sealed class PrintService
         doc.BeginPrint += (_, _) =>
         {
             _currentLine  = 0;
-            _wrappedLines = null;
+            _wrapEnumerator = null;
+            _wrappedTotal = -1;
+            _pendingRow   = null;
+            _exhausted    = false;
         };
         doc.PrintPage += OnPrintPage;
         return doc;
@@ -261,8 +270,15 @@ internal sealed class PrintService
         using var bodyFont = MakeFont(_fontSize);
         using var hfFont   = MakeFont(_fontSize * 0.9f);
 
-        // Wrap all text once using the printable width from the first page.
-        _wrappedLines ??= WordWrapText(g, _text, bodyFont, bounds.Width);
+        // Pass 1 (first page only): stream-wrap everything to count body rows for
+        // the &P token. O(1) memory - rows are counted, not stored.
+        if (_wrappedTotal < 0)
+        {
+            int count = 0;
+            foreach (var _ in WrapRows(g, bodyFont, bounds.Width)) count++;
+            _wrappedTotal = Math.Max(1, count);
+            _wrapEnumerator = WrapRows(g, bodyFont, bounds.Width).GetEnumerator();
+        }
 
         float bodyLineHeight = bodyFont.GetHeight(g);
         float hfLineHeight   = hfFont.GetHeight(g);
@@ -278,7 +294,7 @@ internal sealed class PrintService
 
         // Total pages — recomputed each page (same value every time).
         _totalPages = Math.Max(1,
-            (int)Math.Ceiling(_wrappedLines.Count / (double)linesPerPage));
+            (int)Math.Ceiling(_wrappedTotal / (double)linesPerPage));
 
         int currentPage = (_currentLine / linesPerPage) + 1;
 
@@ -293,11 +309,11 @@ internal sealed class PrintService
 
         float bodyTop = y;
 
-        // Body
-        for (int i = 0; i < linesPerPage && _currentLine < _wrappedLines.Count; i++, _currentLine++)
+        // Body: pull rows from the pass-2 stream.
+        for (int i = 0; i < linesPerPage && TryNextRow(out var row); i++, _currentLine++)
         {
             g.DrawString(
-                _wrappedLines[_currentLine],
+                row,
                 bodyFont,
                 Brushes.Black,
                 new RectangleF(bounds.Left, bodyTop + i * bodyLineHeight, bounds.Width, bodyLineHeight),
@@ -311,7 +327,38 @@ internal sealed class PrintService
             DrawHfLine(g, hfFont, _pageSetup.Footer, bounds, footerY, currentPage, _totalPages);
         }
 
-        e.HasMorePages = _currentLine < _wrappedLines.Count;
+        e.HasMorePages = PeekHasMoreRows();
+    }
+
+    private bool TryNextRow(out string row)
+    {
+        if (_pendingRow is not null)
+        {
+            row = _pendingRow;
+            _pendingRow = null;
+            return true;
+        }
+        if (!_exhausted && _wrapEnumerator is not null && _wrapEnumerator.MoveNext())
+        {
+            row = _wrapEnumerator.Current;
+            return true;
+        }
+        _exhausted = true;
+        row = string.Empty;
+        return false;
+    }
+
+    private bool PeekHasMoreRows()
+    {
+        if (_pendingRow is not null) return true;
+        if (_exhausted || _wrapEnumerator is null) return false;
+        if (_wrapEnumerator.MoveNext())
+        {
+            _pendingRow = _wrapEnumerator.Current;
+            return true;
+        }
+        _exhausted = true;
+        return false;
     }
 
     // -----------------------------------------------------------------------
@@ -407,32 +454,30 @@ internal sealed class PrintService
     // Word-wrap
     // -----------------------------------------------------------------------
 
-    private static List<string> WordWrapText(Graphics g, string text, Font font, float maxWidth)
+    /// <summary>
+    /// Streams wrapped body rows: each logical line from the source is word-wrapped
+    /// to the printable width and its rows yielded one at a time. The per-word
+    /// width memoiser persists across both passes of a job.
+    /// </summary>
+    private IEnumerable<string> WrapRows(Graphics g, Font font, float maxWidth)
     {
-        var result = new List<string>(256);
-        if (string.IsNullOrEmpty(text)) { result.Add(string.Empty); return result; }
-
-        var fmt         = StringFormat.GenericTypographic;
-        var sourceLines = text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
-
-        // Per-word width memoiser. A typical document repeats a small vocabulary many
-        // times (think "the", "and", whitespace, common identifiers in code) — caching
-        // the GDI+ measure across the whole job collapses thousands of MeasureString
-        // calls into a few hundred, dominating the print-time speedup.
-        var wordWidths = new Dictionary<string, float>(StringComparer.Ordinal);
-        float spaceWidth = MeasureWord(" ");
+        var fmt = StringFormat.GenericTypographic;
+        bool any = false;
 
         float MeasureWord(string w)
         {
-            if (wordWidths.TryGetValue(w, out var cached)) return cached;
+            if (_wordWidths.TryGetValue(w, out var cached)) return cached;
             float width = g.MeasureString(w, font, int.MaxValue, fmt).Width;
-            wordWidths[w] = width;
+            _wordWidths[w] = width;
             return width;
         }
 
-        foreach (var source in sourceLines)
+        float spaceWidth = MeasureWord(" ");
+
+        foreach (var source in _lineSource())
         {
-            if (source.Length == 0) { result.Add(string.Empty); continue; }
+            any = true;
+            if (source.Length == 0) { yield return string.Empty; continue; }
 
             var   words        = source.Split(' ');
             var   current      = new StringBuilder();
@@ -445,7 +490,7 @@ internal sealed class PrintService
 
                 if (currentWidth + probeWidth > maxWidth && current.Length > 0)
                 {
-                    result.Add(current.ToString());
+                    yield return current.ToString();
                     current.Clear();
                     current.Append(word);
                     currentWidth = wordWidth;
@@ -458,10 +503,10 @@ internal sealed class PrintService
                 }
             }
 
-            if (current.Length > 0) result.Add(current.ToString());
+            if (current.Length > 0) yield return current.ToString();
         }
 
-        return result;
+        if (!any) yield return string.Empty;
     }
 
     // -----------------------------------------------------------------------

@@ -1,8 +1,46 @@
-# Changelog
+﻿# Changelog
 
 All notable changes to Inklet are documented in this file.
 
 ---
+
+## [2.0.0] - 2026-08-28
+
+### Changed
+- Ground-up text engine rewrite for large files: documents are now
+  memory-mapped and indexed in the background, so files of any size (tested
+  to 1 GB+, designed for tens of GB) open instantly, edit at sub-millisecond
+  latency, and hold flat memory regardless of file size. Typing latency into
+  a 100 MB file improved from ~88 ms to ~0.9 ms per keystroke.
+- Rendering now uses per-line text layouts: tabs, CJK text, proportional
+  fonts and emoji position correctly in hit-testing, selection and the caret
+  (previously monospace-approximated).
+- Undo is per-tab and survives both tab switches and saves; undoing back to
+  the last saved state marks the tab clean again.
+- Saving is atomic (temp file + swap) and byte-identical outside your edits -
+  mixed line endings in existing files are preserved exactly.
+- Find, Replace and Replace All run in the background and no longer freeze
+  the window on large documents; Replace All is a single undo step.
+- Replacing text no longer clears the undo history.
+- Session files now store edit deltas instead of full document text for
+  file-backed tabs (a 1 GB file with a few edits persists in ~1 KB); old
+  session files migrate automatically.
+- Printing streams the document instead of holding several copies in memory.
+- The "Large File" warning dialog is gone - opening is instant at any size.
+- The caret now blinks at the system rate and idle redraws are eliminated.
+
+### Fixed
+- The portable (non-Store) release build crashed on startup with error
+  0xC000027B: the publish pipeline silently skipped WinUI resource generation
+  and omitted the app's resource index and compiled XAML from the output. The
+  release workflow now publishes through msbuild (so the platform applies), the
+  project carries its resources into the publish output, and the workflow fails
+  fast if they are ever missing again.
+- Opening a file larger than 10 MB from the command line or a file association
+  silently failed: the "Large File" confirmation dialog was shown before the
+  window's content tree was ready (null `XamlRoot`), and the resulting
+  `ArgumentException` was swallowed by the fire-and-forget startup task. The
+  startup path now waits for the content tree before prompting.
 
 ## [1.0.9] - 2026-06-27
 
