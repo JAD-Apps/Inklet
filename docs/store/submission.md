@@ -1,15 +1,15 @@
-# Inklet 2.0.0 — Microsoft Store submission pack
+﻿# Inklet 2.0.0 — Microsoft Store submission pack
 
 Everything to paste into Partner Center for the 2.0.0 update. Field limits are
 noted where they matter; all copy below fits them. The upload artifact is
-`Inklet (Package)/AppPackages/Inklet (Package)_2.0.0.0_x86_x64_arm64_bundle.msixupload`.
+`Inklet (Package)/AppPackages/Inklet (Package)_2.0.1.0_x86_x64_arm64_bundle.msixupload`.
 
 ---
 
 ## Packages
 
-- Upload: `Inklet (Package)_2.0.0.0_x86_x64_arm64_bundle.msixupload`
-- Version: 2.0.0.0 (supersedes 1.0.9.0)
+- Upload: `Inklet (Package)_2.0.1.0_x86_x64_arm64_bundle.msixupload`
+- Version: 2.0.1.0 (supersedes 1.0.9.0; 2.0.1 fixes a crash on backspace at end of document found in QA)
 - Architectures: x86, x64, ARM64
   - Note: on 32-bit (x86) devices, files larger than 256 MB are refused with a
     message pointing at the 64-bit build; the large-file engine is 64-bit only.
@@ -103,6 +103,7 @@ big file editor
 | `02-gigabyte-file.png` | A 1 GB log file at line 11,000,000 — opened instantly, scrolled and edited without a stutter. |
 | `03-find-replace.png` | Find & Replace runs in the background — searching a gigabyte never freezes the window. |
 | `04-light-theme.png` | Light and dark themes follow Windows. No accounts, no telemetry, no clutter. |
+| `05-menu-open.png` | Everything where you expect it - File, Edit, Format, View and Help behind one clean menu. |
 
 Order in Partner Center: 02 (the differentiator) first or 01 first — recommend
 02, 01, 03, 04 so the large-file story leads.
