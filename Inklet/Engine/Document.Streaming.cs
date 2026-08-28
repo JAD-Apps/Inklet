@@ -23,6 +23,12 @@ internal sealed partial class Document : IDisposable
     /// <summary>Unstreamable encodings are fully decoded up to this size, refused beyond.</summary>
     internal const long UnstreamableMaxBytes = 256 * 1024 * 1024;
 
+    /// <summary>
+    /// 32-bit processes cannot map large files into their 2 GB address space;
+    /// they take the full-decode path up to this cap and refuse beyond it.
+    /// </summary>
+    internal const long ThirtyTwoBitMaxBytes = 256 * 1024 * 1024;
+
     private IByteSource? _source;
     private TextCodec? _codec;
     private OriginalIndex? _index;
@@ -113,7 +119,15 @@ internal sealed partial class Document : IDisposable
             var codec = TextCodec.Create(encoding, hasBom);
             long contentBytes = source.Length - codec.PreambleLength;
 
-            if (codec.Class == CodecClass.Unstreamable || (!forceStreaming && source.Length <= SmallFileThresholdBytes))
+            // A 32-bit process has ~2 GB of address space total; whole-file mapping
+            // is not viable there. Gate to the in-memory path with a clear message.
+            bool force32BitDecode = !Environment.Is64BitProcess;
+            if (force32BitDecode && source.Length > ThirtyTwoBitMaxBytes)
+                throw new NotSupportedException(
+                    $"Files larger than {ThirtyTwoBitMaxBytes / (1024 * 1024)} MB need the 64-bit version of Inklet.");
+
+            if (codec.Class == CodecClass.Unstreamable || force32BitDecode
+                || (!forceStreaming && source.Length <= SmallFileThresholdBytes))
             {
                 if (codec.Class == CodecClass.Unstreamable && source.Length > UnstreamableMaxBytes)
                     throw new NotSupportedException(

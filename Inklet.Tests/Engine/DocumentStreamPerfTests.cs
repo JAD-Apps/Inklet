@@ -20,6 +20,8 @@ public sealed class DocumentStreamPerfTests
     [ClassInitialize]
     public static void CreateCorpus(TestContext _)
     {
+        if (!Environment.Is64BitProcess)
+            Assert.Inconclusive("The streaming path is 64-bit only; 32-bit uses full decode.");
         s_bigFile = Path.Combine(Path.GetTempPath(), "inklet-perf-256mb.log");
         var block = Encoding.ASCII.GetBytes(string.Concat(Enumerable.Repeat(Line, 1024)));
         long reps = TargetBytes / block.Length;

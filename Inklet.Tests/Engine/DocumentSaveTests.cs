@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using Inklet.Engine;
 
 namespace Inklet.Tests.Engine;
@@ -93,6 +93,8 @@ public sealed class DocumentSaveTests
     [TestMethod]
     public void WhenSaveWhileStillIndexingThenTailBytesPreserved()
     {
+        if (!Environment.Is64BitProcess)
+            Assert.Inconclusive("The streaming path is 64-bit only; 32-bit uses full decode.");
         byte[] source = Encoding.ASCII.GetBytes(string.Concat(Enumerable.Range(0, 3000).Select(i => $"idx row {i:D6}\n")));
         string src = TempPath(), dst = TempPath();
         File.WriteAllBytes(src, source);

@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using Inklet.Engine;
 
 namespace Inklet.Tests.Engine;
@@ -129,6 +129,8 @@ public sealed class SessionV2Tests
     [TestMethod]
     public void WhenDirtyStreamedDocStillIndexingThenCaptureDeclines()
     {
+        if (!Environment.Is64BitProcess)
+            Assert.Inconclusive("The streaming path is 64-bit only; 32-bit uses full decode.");
         var body = string.Concat(Enumerable.Range(0, 3000).Select(i => $"gate row {i:D6}\n"));
         string path = TempPath();
         File.WriteAllText(path, body);
