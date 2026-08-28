@@ -37,6 +37,7 @@ jobs:
         run: >
           dotnet msbuild "Inklet/Inklet.csproj"
           -t:Publish
+          -restore
           -p:Configuration=Release
           -p:Platform=${{ matrix.arch }}
           -p:RuntimeIdentifier=win-${{ matrix.arch }}
