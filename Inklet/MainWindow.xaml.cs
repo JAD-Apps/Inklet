@@ -170,6 +170,55 @@ public sealed partial class MainWindow : Window
         AppWindow.TitleBar.ButtonPressedBackgroundColor = Colors.Transparent;
     }
 
+    /// <summary>
+    /// Declares exactly which title-bar rectangles receive input (tabs, add
+    /// button, scroll arrows, gear) instead of trusting WinUI's automatic
+    /// SetTitleBar passthrough. The automatic regions go stale after tab-header
+    /// changes (e.g. the dirty-flag '*' resizing a header) and the drag layer
+    /// then swallows clicks over the tabs - QA: "tab selection is blocked by
+    /// the label". Everything outside these rects stays draggable caption.
+    /// </summary>
+    private void UpdateTitleBarPassthrough()
+    {
+        try
+        {
+            if (TitleBarGrid.XamlRoot is null) return;
+            double scale = TitleBarGrid.XamlRoot.RasterizationScale;
+            var rects = new List<Windows.Graphics.RectInt32>();
+
+            void Add(FrameworkElement? el)
+            {
+                if (el is null || el.ActualWidth <= 0 || el.Visibility != Visibility.Visible) return;
+                var origin = el.TransformToVisual(null).TransformPoint(new Windows.Foundation.Point(0, 0));
+                rects.Add(new Windows.Graphics.RectInt32(
+                    (int)Math.Floor(origin.X * scale),
+                    (int)Math.Floor(origin.Y * scale),
+                    (int)Math.Ceiling(el.ActualWidth * scale),
+                    (int)Math.Ceiling(el.ActualHeight * scale)));
+            }
+
+            // Each tab gets its own rect (the area right of the last tab stays
+            // draggable, like Terminal), plus the tab strip's add button and
+            // our chrome buttons.
+            foreach (var item in TabStrip.TabItems)
+            {
+                if (TabStrip.ContainerFromItem(item) is FrameworkElement tvi)
+                    Add(tvi);
+            }
+            Add(FindDescendantByName(TabStrip, "AddButton") as FrameworkElement);
+            Add(ScrollTabsLeftButton);
+            Add(ScrollTabsRightButton);
+            Add(GearButton);
+
+            var src = Microsoft.UI.Input.InputNonClientPointerSource.GetForWindowId(AppWindow.Id);
+            src.SetRegionRects(Microsoft.UI.Input.NonClientRegionKind.Passthrough, rects.ToArray());
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"UpdateTitleBarPassthrough failed: {ex.Message}");
+        }
+    }
+
     private void TitleBar_Loaded(object _, RoutedEventArgs _e)
     {
         UpdateCaptionButtonColumn();
@@ -183,6 +232,39 @@ public sealed partial class MainWindow : Window
 
         ConfigureTabViewVisualTree();
         WireScrollButtonPointerEvents();
+
+        // Keep the passthrough rects tracking the tabs through every relayout
+        // (tab add/remove/rename, resize, selection width changes).
+        TabStrip.LayoutUpdated += (_, _) => UpdateTitleBarPassthrough();
+        UpdateTitleBarPassthrough();
+
+        // Diagnostic: trace pointer arrival vs selection (dev-only, marker-gated).
+        if (System.IO.File.Exists(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "inklet-uilog-on")))
+        {
+            TabStrip.AddHandler(UIElement.PointerPressedEvent,
+                new PointerEventHandler((_, e) =>
+                {
+                    var pos = e.GetCurrentPoint(TabStrip).Position;
+                    UiLog($"TabStrip PointerPressed at {pos.X:F0},{pos.Y:F0} handled={e.Handled}");
+                }), handledEventsToo: true);
+            TabStrip.AddHandler(UIElement.PointerReleasedEvent,
+                new PointerEventHandler((_, e) =>
+                {
+                    var pos = e.GetCurrentPoint(TabStrip).Position;
+                    UiLog($"TabStrip PointerReleased at {pos.X:F0},{pos.Y:F0} handled={e.Handled}");
+                }), handledEventsToo: true);
+        }
+    }
+
+    internal static void UiLog(string message)
+    {
+        try
+        {
+            System.IO.File.AppendAllText(
+                System.IO.Path.Combine(System.IO.Path.GetTempPath(), "inklet-ui.log"),
+                $"[{DateTime.Now:HH:mm:ss.fff}] {message}\r\n");
+        }
+        catch { }
     }
 
     private void TitleBar_SizeChanged(object _, SizeChangedEventArgs _e)
@@ -464,14 +546,21 @@ public sealed partial class MainWindow : Window
     {
         if (tvi.Tag is not TabSession session) return;
 
+        bool trace = System.IO.File.Exists(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "inklet-uilog-on"));
+        if (trace) UiLog("SwitchToTab: begin");
         // O(1): swap the document reference and restore this tab's view. No text
         // moves and the incoming tab's undo history is intact.
         Editor.Document = session.Doc;
+        if (trace) UiLog("SwitchToTab: document swapped");
         Editor.RestoreViewState(session.View);
+        if (trace) UiLog("SwitchToTab: view restored");
         Editor.WordWrap = _settings.WordWrap;
+        if (trace) UiLog("SwitchToTab: wrap set");
         UpdateTitle(session);
         UpdateStatusBar(session);
+        if (trace) UiLog("SwitchToTab: title+status done");
         Editor.Focus(FocusState.Programmatic);
+        if (trace) UiLog("SwitchToTab: end");
     }
 
     /// <summary>Captures the active tab's caret/selection/scroll into its session.</summary>
@@ -584,6 +673,8 @@ public sealed partial class MainWindow : Window
 
     private void TabStrip_SelectionChanged(object _, SelectionChangedEventArgs e)
     {
+        if (System.IO.File.Exists(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "inklet-uilog-on")))
+            UiLog($"SelectionChanged -> index {TabStrip.SelectedIndex}");
         // Capture the outgoing tab's caret/scroll; its text needs no syncing -
         // the document IS the state.
         foreach (var removed in e.RemovedItems.OfType<TabViewItem>())
