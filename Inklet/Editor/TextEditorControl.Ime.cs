@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Runtime.InteropServices;
 using Inklet.Engine;
 using Windows.Foundation;
@@ -25,7 +25,17 @@ internal sealed partial class TextEditorControl
 {
     private const int MaxImeRequestChars = 64 * 1024;
 
-    private bool ImeMappable => (_doc?.Length ?? 0) <= int.MaxValue;
+    /// <summary>
+    /// Documents beyond this size are not synchronised with the text-services
+    /// framework at all. TSF's NotifyTextChanged synchronously re-queries
+    /// document content, and declaring a multi-million-char document makes that
+    /// sync spin long enough to hang the UI thread (QA: switching to a 1 GB tab
+    /// froze tab selection). Inline IME composition is unavailable in such
+    /// documents; plain typing is unaffected.
+    /// </summary>
+    private const long MaxImeDocumentChars = 2_000_000;
+
+    private bool ImeMappable => (_doc?.Length ?? 0) <= MaxImeDocumentChars;
 
     private int ImeClamp(long value) => (int)Math.Clamp(value, 0, int.MaxValue);
 

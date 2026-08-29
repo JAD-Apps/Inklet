@@ -7,6 +7,15 @@ All notable changes to Inklet are documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- Clicking tabs stopped working after switching between tabs when a very
+  large file was open: the text-services (IME) subsystem re-synchronises
+  document content when told a document changed, and declaring a
+  multi-million-character document made that synchronous sync hang the UI
+  thread mid-switch. Documents beyond 2 million characters are no longer
+  synchronised with the IME subsystem (inline East-Asian composition is
+  unavailable in such documents; typing is unaffected). The title bar also
+  now declares explicit click-through regions for the tabs and buttons
+  instead of relying on the framework's automatic regions.
 - Copying or cutting text crashed the app instead of completing or refusing
   gracefully: the WinRT clipboard API (`Clipboard.SetContent`) fails with
   0x800401F0 from the packaged window even for small strings, and the
