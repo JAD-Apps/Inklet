@@ -7,6 +7,14 @@ All notable changes to Inklet are documented in this file.
 ## [2.0.2] - 2026-08-30
 
 ### Fixed
+- Any assistive technology could crash the app just by inspecting it. Narrator,
+  Voice Access, Magnifier's text tracking and the accessibility scans a store
+  submission runs all enumerate a window's UI Automation tree, and doing so
+  killed Inklet instantly. The app's entry point ran the UI thread in the
+  wrong COM apartment, and automation providers are COM objects that must be
+  created on the same kind of thread the UI lives on; the mismatch faulted
+  inside the framework. The entry point now uses the apartment WinUI itself
+  expects, and the automation tree can be read safely.
 - Double-clicking a word selected nothing and triple-clicking a line selected
   nothing: the editor had no notion of a click run, so every press simply moved
   the caret. Double-click now selects the word under the pointer (or the run of
