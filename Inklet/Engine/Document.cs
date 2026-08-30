@@ -234,6 +234,51 @@ internal sealed partial class Document
     }
 
     /// <summary>
+    /// Word-character test used by word-wise navigation and selection: letters,
+    /// digits and underscore are word characters, everything else separates.
+    /// </summary>
+    public static bool IsWordSeparator(char c) => c != '_' && !char.IsLetterOrDigit(c);
+
+    /// <summary>
+    /// The run of like characters around <paramref name="offset"/> — a word, or the
+    /// stretch of separators when the offset falls between words. Never spans a line
+    /// break: the range is clamped to the line the offset sits on.
+    /// </summary>
+    public (long Start, long End) WordRangeAt(long offset)
+    {
+        offset = Math.Clamp(offset, 0, AddressableLength);
+        var (line, col) = GetLineColumn(offset);
+        var slice = GetLine(line);
+        var text = slice.Text.Span;
+        if (text.Length == 0) return (slice.CharOffset, slice.CharOffset);
+
+        // An offset at the very end of the line belongs to the last character's run,
+        // which is what clicking past the end of a line is asking for.
+        int p = (int)Math.Clamp(col, 0, text.Length);
+        if (p >= text.Length) p = text.Length - 1;
+
+        bool sep = IsWordSeparator(text[p]);
+        int s = p, e = p;
+        while (s > 0 && IsWordSeparator(text[s - 1]) == sep) s--;
+        while (e < text.Length && IsWordSeparator(text[e]) == sep) e++;
+        return (slice.CharOffset + s, slice.CharOffset + e);
+    }
+
+    /// <summary>
+    /// The whole logical line containing <paramref name="offset"/>, terminator
+    /// included, so selecting and deleting it removes the line break too.
+    /// </summary>
+    public (long Start, long End) LineRangeAt(long offset)
+    {
+        offset = Math.Clamp(offset, 0, AddressableLength);
+        var (line, _) = GetLineColumn(offset);
+        var slice = GetLine(line);
+        long end = Math.Min(AddressableLength,
+                            slice.CharOffset + slice.Text.Length + slice.TerminatorLength);
+        return (slice.CharOffset, end);
+    }
+
+    /// <summary>
     /// Moves an offset off the middle of an atomic pair (CRLF or surrogate pair).
     /// </summary>
     public long SnapCaret(long offset, SnapDirection direction)
