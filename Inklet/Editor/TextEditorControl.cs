@@ -100,6 +100,15 @@ internal sealed partial class TextEditorControl : UserControl
     private long _anchor;                // selection anchor (== caret when no selection)
     private bool _hasFocus;
     private bool _pointerDown;
+
+    // Multi-click selection (see OnPointerPressed): the run counter, the last
+    // click for the time/distance test, and the unit first clicked so a drag can
+    // grow by whole words/lines from it.
+    private int _clickCount;
+    private ulong _lastClickTimestamp;
+    private double _lastClickX, _lastClickY;
+    private int _dragGranularity = 1;      // 1 char, 2 word, 3 line
+    private long _dragOriginStart, _dragOriginEnd;
     private float _desiredColumnX = -1;  // sticky X for up/down navigation
 
     private const float PadLeft = 12f;

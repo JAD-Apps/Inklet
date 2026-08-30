@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Runtime.InteropServices;
 using Inklet.Engine;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -163,18 +164,66 @@ internal sealed partial class TextEditorControl
         return slice.CharOffset + p;
     }
 
-    private static bool IsWordSep(char c) => c != '_' && !char.IsLetterOrDigit(c);
+    private static bool IsWordSep(char c) => Document.IsWordSeparator(c);
+
+    /// <summary>The selection unit for a click run: char, word, or whole line.</summary>
+    private (long Start, long End) RangeAt(long offset, int granularity)
+    {
+        var doc = _doc;
+        if (doc is null) return (offset, offset);
+        return granularity switch
+        {
+            2 => doc.WordRangeAt(offset),
+            3 => doc.LineRangeAt(offset),
+            _ => (offset, offset),
+        };
+    }
 
     // ── Mouse ────────────────────────────────────────────────────────────────
+
+    [DllImport("user32.dll")]
+    private static extern uint GetDoubleClickTime();
 
     private void OnPointerPressed(object sender, PointerRoutedEventArgs e)
     {
         Focus(FocusState.Pointer);
-        var pt = e.GetCurrentPoint(_canvas).Position;
+        var point = e.GetCurrentPoint(_canvas);
+        var pt = point.Position;
         long pos = HitTestOffset(pt.X, pt.Y);
         bool shift = IsDown(VirtualKey.Shift);
-        _caret = pos;
-        if (!shift) _anchor = pos;
+
+        // Click-count tracking. WinUI's pointer events carry no ClickCount, and its
+        // DoubleTapped gesture would fight the drag-select pointer capture, so the
+        // run is counted here against the system double-click time.
+        ulong ts = point.Timestamp;                        // microseconds
+        bool nearby = Math.Abs(pt.X - _lastClickX) <= 4 && Math.Abs(pt.Y - _lastClickY) <= 4;
+        bool quick = _lastClickTimestamp != 0
+                     && ts >= _lastClickTimestamp
+                     && (ts - _lastClickTimestamp) <= (ulong)GetDoubleClickTime() * 1000UL;
+        _clickCount = (nearby && quick) ? _clickCount + 1 : 1;
+        if (_clickCount > 3) _clickCount = 1;              // 4th click starts over
+        if (shift) _clickCount = 1;                        // shift-click always extends
+        _lastClickTimestamp = ts;
+        _lastClickX = pt.X;
+        _lastClickY = pt.Y;
+
+        _dragGranularity = _clickCount;
+        if (_clickCount == 1)
+        {
+            _caret = pos;
+            if (!shift) _anchor = pos;
+        }
+        else
+        {
+            // Select the word/line, and remember it so dragging extends whole
+            // words/lines outward from it rather than collapsing to the pointer.
+            var (s, en) = RangeAt(pos, _clickCount);
+            _dragOriginStart = s;
+            _dragOriginEnd = en;
+            _anchor = s;
+            _caret = en;
+        }
+
         _pointerDown = true;
         _canvas.CapturePointer(e.Pointer);
         _desiredColumnX = -1;
@@ -189,7 +238,21 @@ internal sealed partial class TextEditorControl
     {
         if (!_pointerDown) return;
         var pt = e.GetCurrentPoint(_canvas).Position;
-        _caret = HitTestOffset(pt.X, pt.Y);
+        long pos = HitTestOffset(pt.X, pt.Y);
+
+        if (_dragGranularity > 1 && _doc is not null)
+        {
+            // Word/line drag: keep the originally-clicked unit whole and grow by
+            // whole units in whichever direction the pointer went.
+            var (s, en) = RangeAt(pos, _dragGranularity);
+            if (pos < _dragOriginStart) { _anchor = _dragOriginEnd; _caret = s; }
+            else                        { _anchor = _dragOriginStart; _caret = en; }
+        }
+        else
+        {
+            _caret = pos;
+        }
+
         BringCaretIntoView();
         InvalidateView();
         RaiseSelectionChanged();
