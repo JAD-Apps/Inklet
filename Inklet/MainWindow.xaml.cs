@@ -35,9 +35,11 @@ public sealed partial class MainWindow : Window
 {
     private static readonly string[] s_textFileTypes = [".txt"];
 
-    // FileSavePicker accepts "*" as the documented "All Files" wildcard. The previous
-    // value "." was non-standard and worked only on some Windows builds.
-    private static readonly string[] s_allFileTypes = ["*"];
+    // The two pickers spell "all files" differently, and swapping them throws:
+    // FileOpenPicker.FileTypeFilter takes "*", while FileSavePicker.FileTypeChoices
+    // takes "." and rejects "*" outright with "This file picker does not allow the
+    // all files extension" — which killed the process on every Save As.
+    private static readonly string[] s_allFileTypes = ["."];
 
     // Common monospaced fonts shown in the font picker drop-down.
     private static readonly string[] s_monoFonts =
@@ -1131,14 +1133,27 @@ public sealed partial class MainWindow : Window
     {
         if (session.Doc is null) return false;
 
-        var picker = new FileSavePicker();
-        InitializeWithWindow(picker);
-        picker.SuggestedStartLocation = PickerLocationId.DocumentsLibrary;
-        picker.FileTypeChoices.Add("Text Documents", s_textFileTypes);
-        picker.FileTypeChoices.Add("All Files", s_allFileTypes);
-        picker.SuggestedFileName = session.Document.DisplayFileName;
+        // Building and showing the picker has to be inside the guard too. It was
+        // outside, so a picker that refused its own configuration threw straight
+        // out of this async method and terminated the app rather than reporting
+        // that the file could not be saved.
+        Windows.Storage.StorageFile? file;
+        try
+        {
+            var picker = new FileSavePicker();
+            InitializeWithWindow(picker);
+            picker.SuggestedStartLocation = PickerLocationId.DocumentsLibrary;
+            picker.FileTypeChoices.Add("Text Documents", s_textFileTypes);
+            picker.FileTypeChoices.Add("All Files", s_allFileTypes);
+            picker.SuggestedFileName = session.Document.DisplayFileName;
 
-        var file = await picker.PickSaveFileAsync();
+            file = await picker.PickSaveFileAsync();
+        }
+        catch (Exception ex)
+        {
+            await ShowErrorAsync("Error Saving File", ex.Message);
+            return false;
+        }
         if (file is null) return false;
 
         try
