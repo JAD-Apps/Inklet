@@ -35,8 +35,34 @@ internal sealed record EditorViewState(ViewportAnchor Anchor, double ScrollX, lo
 internal sealed partial class TextEditorControl : UserControl
 {
     private readonly CanvasControl _canvas = new() { IsTabStop = false };
-    private readonly ScrollBar _vScroll = new() { Orientation = Orientation.Vertical, IsTabStop = false };
-    private readonly ScrollBar _hScroll = new() { Orientation = Orientation.Horizontal, IsTabStop = false };
+    // These ScrollBars are standalone (no ScrollViewer owns them), so nothing
+    // drives the "conscious scrollbar" visual states for us: IndicatorMode must be
+    // set explicitly or the template paints nothing, and an explicit thickness is
+    // needed or the Auto-sized grid track collapses to zero width. Without both,
+    // the bars are invisible however correct Maximum/ViewportSize/Visibility are.
+    private const double ScrollBarThickness = 12;
+
+    private readonly ScrollBar _vScroll = new()
+    {
+        Orientation = Orientation.Vertical,
+        IsTabStop = false,
+        IndicatorMode = ScrollingIndicatorMode.MouseIndicator,
+        Width = ScrollBarThickness,
+        MinWidth = ScrollBarThickness,
+        HorizontalAlignment = HorizontalAlignment.Right,
+        VerticalAlignment = VerticalAlignment.Stretch,
+    };
+
+    private readonly ScrollBar _hScroll = new()
+    {
+        Orientation = Orientation.Horizontal,
+        IsTabStop = false,
+        IndicatorMode = ScrollingIndicatorMode.MouseIndicator,
+        Height = ScrollBarThickness,
+        MinHeight = ScrollBarThickness,
+        HorizontalAlignment = HorizontalAlignment.Stretch,
+        VerticalAlignment = VerticalAlignment.Bottom,
+    };
     private readonly Microsoft.UI.Xaml.Shapes.Rectangle _caretRect = new() { IsHitTestVisible = false, Width = 1.6 };
     private readonly Grid _rootGrid;
 

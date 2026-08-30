@@ -18,6 +18,12 @@ All notable changes to Inklet are documented in this file.
   now bounded by how much of the document is actually addressable rather than
   by its estimated total size, in session restore, caret movement, selection,
   undo/redo, rendering and the text-services read path.
+- Scrollbars were never visible. The editor's scrollbars are created directly
+  rather than by a scroll viewer, so they needed their indicator mode set
+  explicitly and an explicit thickness; without both they drew nothing and
+  took up no width, however correct their range and visibility were.
+  Vertical and horizontal scrollbars now appear whenever the content
+  overflows.
 - Clicking tabs stopped working after switching between tabs when a very
   large file was open: the text-services (IME) subsystem re-synchronises
   document content when told a document changed, and declaring a
