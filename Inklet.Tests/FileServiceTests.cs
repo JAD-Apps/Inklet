@@ -314,6 +314,63 @@ public class FileServiceTests
         Assert.IsTrue(FileService.IsBinaryFile(filePath));
     }
 
+    // A UTF-16/32 file is half NUL bytes by construction, so the NUL heuristic
+    // used to refuse every one of them behind the "Binary File" dialog (whose
+    // default button is Cancel). A Unicode BOM means the file has declared itself
+    // text and the heuristic must not apply.
+
+    [TestMethod]
+    public void WhenFileIsUtf16LeWithBomThenIsBinaryFalse()
+    {
+        var filePath = Path.Combine(_testDir, "utf16le.txt");
+        byte[] bytes = [0xFF, 0xFE, .. Encoding.Unicode.GetBytes("utf16 le\r\nline two\r\n")];
+        File.WriteAllBytes(filePath, bytes);
+
+        Assert.IsFalse(FileService.IsBinaryFile(filePath));
+    }
+
+    [TestMethod]
+    public void WhenFileIsUtf16BeWithBomThenIsBinaryFalse()
+    {
+        var filePath = Path.Combine(_testDir, "utf16be.txt");
+        byte[] bytes = [0xFE, 0xFF, .. new UnicodeEncoding(bigEndian: true, byteOrderMark: false).GetBytes("utf16 be\r\n")];
+        File.WriteAllBytes(filePath, bytes);
+
+        Assert.IsFalse(FileService.IsBinaryFile(filePath));
+    }
+
+    [TestMethod]
+    public void WhenFileIsUtf32LeWithBomThenIsBinaryFalse()
+    {
+        var filePath = Path.Combine(_testDir, "utf32le.txt");
+        byte[] bytes = [0xFF, 0xFE, 0x00, 0x00, .. new UTF32Encoding(bigEndian: false, byteOrderMark: false).GetBytes("utf32\r\n")];
+        File.WriteAllBytes(filePath, bytes);
+
+        Assert.IsFalse(FileService.IsBinaryFile(filePath));
+    }
+
+    [TestMethod]
+    public void WhenFileHasNoBomButNulBytesThenStillIsBinaryTrue()
+    {
+        // Without a BOM, NUL-bearing content stays ambiguous with binary and keeps
+        // the warning — only a declared Unicode encoding earns the exemption.
+        var filePath = Path.Combine(_testDir, "bomless.unknown");
+        File.WriteAllBytes(filePath, Encoding.Unicode.GetBytes("no bom here"));
+
+        Assert.IsTrue(FileService.IsBinaryFile(filePath));
+    }
+
+    [TestMethod]
+    public void WhenUtf16BomFileHasBinaryExtensionThenIsBinaryTrue()
+    {
+        // The extension list is a stronger signal than the BOM and still wins.
+        var filePath = Path.Combine(_testDir, "thing.dll");
+        byte[] bytes = [0xFF, 0xFE, .. Encoding.Unicode.GetBytes("looks like text")];
+        File.WriteAllBytes(filePath, bytes);
+
+        Assert.IsTrue(FileService.IsBinaryFile(filePath));
+    }
+
     [TestMethod]
     public void WhenFileContainsOnlyTextThenIsBinaryFalse()
     {
