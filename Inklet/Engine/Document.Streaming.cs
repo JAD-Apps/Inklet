@@ -105,9 +105,30 @@ internal sealed partial class Document : IDisposable
 
     private ScanCarry _pendingCarry;
 
+    /// <summary>
+    /// Refuses a file a 32-bit build cannot open, with the message that points at
+    /// the 64-bit build. Separated from the open path so it can be exercised for
+    /// either process width from a 64-bit test host.
+    /// </summary>
+    /// <param name="lengthOnDisk">File size in bytes, read before any mapping.</param>
+    /// <param name="is64BitProcess">Whether the current process is 64-bit.</param>
+    internal static void GuardThirtyTwoBitFileSize(long lengthOnDisk, bool is64BitProcess)
+    {
+        if (!is64BitProcess && lengthOnDisk > ThirtyTwoBitMaxBytes)
+            throw new NotSupportedException(
+                $"Files larger than {ThirtyTwoBitMaxBytes / (1024 * 1024)} MB need the 64-bit version of Inklet.");
+    }
+
     private static Document OpenCore(string path, CancellationToken ct, int segmentBytes, bool startIndexer,
         bool forceStreaming)
     {
+        // Before mapping: on a 32-bit process the mapping itself cannot succeed for
+        // a large file. It fails with a raw OS "Not enough memory resources are
+        // available to process this command", which is what the user saw — the
+        // guard further down never got the chance to run. Checking the size on disk
+        // first makes the refusal the message we actually mean.
+        GuardThirtyTwoBitFileSize(new FileInfo(path).Length, Environment.Is64BitProcess);
+
         var source = new MemoryMappedByteSource(path);
         try
         {
@@ -120,11 +141,9 @@ internal sealed partial class Document : IDisposable
             long contentBytes = source.Length - codec.PreambleLength;
 
             // A 32-bit process has ~2 GB of address space total; whole-file mapping
-            // is not viable there. Gate to the in-memory path with a clear message.
+            // is not viable there, so it takes the in-memory decode path instead.
+            // The size refusal already happened above, before the mapping.
             bool force32BitDecode = !Environment.Is64BitProcess;
-            if (force32BitDecode && source.Length > ThirtyTwoBitMaxBytes)
-                throw new NotSupportedException(
-                    $"Files larger than {ThirtyTwoBitMaxBytes / (1024 * 1024)} MB need the 64-bit version of Inklet.");
 
             if (codec.Class == CodecClass.Unstreamable || force32BitDecode
                 || (!forceStreaming && source.Length <= SmallFileThresholdBytes))
