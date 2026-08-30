@@ -192,7 +192,9 @@ internal sealed partial class TextEditorControl : UserControl
     /// <summary>Restores a previously captured view for the incoming tab.</summary>
     public void RestoreViewState(EditorViewState state)
     {
-        long len = _doc?.Length ?? 0;
+        // AddressableLength, not Length: a session-restored caret can sit far beyond
+        // the indexer's absorbed frontier, and every geometry call below would throw.
+        long len = _doc?.AddressableLength ?? 0;
         _caret = Math.Clamp(state.Caret, 0, len);
         _anchor = Math.Clamp(state.Anchor2, 0, len);
         _anchorView = state.Anchor;
@@ -209,7 +211,7 @@ internal sealed partial class TextEditorControl : UserControl
     public long SelectionLength => Math.Abs(_caret - _anchor);
 
     public (long Line, long Column) CaretLineColumn
-        => _doc is null ? (0, 0) : _doc.GetLineColumn(Math.Clamp(_caret, 0, _doc.Length));
+        => _doc is null ? (0, 0) : _doc.GetLineColumn(Math.Clamp(_caret, 0, _doc.AddressableLength));
 
     public long LineCount => _doc?.LineCount ?? 1;
     public bool IsLineCountExact => _doc?.IsLineCountExact ?? true;
@@ -221,7 +223,7 @@ internal sealed partial class TextEditorControl : UserControl
     public void SetSelection(long start, long length)
     {
         if (_doc is null) return;
-        long len = _doc.Length;
+        long len = _doc.AddressableLength;
         start = _doc.SnapCaret(Math.Clamp(start, 0, len), SnapDirection.Left);
         long end = _doc.SnapCaret(Math.Clamp(start + Math.Max(0, length), 0, len), SnapDirection.Right);
         _anchor = start;
@@ -360,7 +362,7 @@ internal sealed partial class TextEditorControl : UserControl
         var pos = _doc.Undo();
         if (pos is long p)
         {
-            _caret = _anchor = Math.Clamp(p, 0, _doc.Length);
+            _caret = _anchor = Math.Clamp(p, 0, _doc.AddressableLength);
             NotifyImeUndoRedo();
             AfterEdit();
         }
@@ -372,7 +374,7 @@ internal sealed partial class TextEditorControl : UserControl
         var pos = _doc.Redo();
         if (pos is long p)
         {
-            _caret = _anchor = Math.Clamp(p, 0, _doc.Length);
+            _caret = _anchor = Math.Clamp(p, 0, _doc.AddressableLength);
             NotifyImeUndoRedo();
             AfterEdit();
         }

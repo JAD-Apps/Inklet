@@ -66,7 +66,9 @@ internal sealed partial class TextEditorControl
     {
         var doc = _doc;
         if (doc is null) return;
-        _caret = Math.Clamp(newPos, 0, doc.Length);
+        // Clamp to what the piece tree can address, not to the indexing estimate:
+        // BringCaretIntoView below asks for this offset's geometry.
+        _caret = Math.Clamp(newPos, 0, doc.AddressableLength);
         if (!extend) _anchor = _caret;
         _desiredColumnX = -1;
         doc.SealUndoCoalescing();

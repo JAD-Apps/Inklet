@@ -7,6 +7,17 @@ All notable changes to Inklet are documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- Reopening the app could kill it on every launch, leaving no way back in
+  without clearing app data by hand. Restoring a session whose selected tab
+  was a large file with the caret far into it (for example after Ctrl+End,
+  then closing the window) asked the engine for the caret's line and column
+  before background indexing had reached that far, and the resulting error
+  escaped through a UI callback and terminated the process. The same cause
+  could instead leave the tab blank until the window was clicked, when the
+  error surfaced on a background task and was swallowed. Caret positions are
+  now bounded by how much of the document is actually addressable rather than
+  by its estimated total size, in session restore, caret movement, selection,
+  undo/redo, rendering and the text-services read path.
 - Clicking tabs stopped working after switching between tabs when a very
   large file was open: the text-services (IME) subsystem re-synchronises
   document content when told a document changed, and declaring a
