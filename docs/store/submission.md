@@ -1,15 +1,16 @@
-﻿# Inklet 2.0.0 — Microsoft Store submission pack
+﻿# Inklet 2.0.2 — Microsoft Store submission pack
 
-Everything to paste into Partner Center for the 2.0.0 update. Field limits are
+Everything to paste into Partner Center for the 2.0.2 update. Field limits are
 noted where they matter; all copy below fits them. The upload artifact is
-`Inklet (Package)/AppPackages/Inklet (Package)_2.0.1.0_x86_x64_arm64_bundle.msixupload`.
+`Inklet (Package)/AppPackages/Inklet (Package)_2.0.2.0_x86_x64_arm64_bundle.msixupload`.
 
 ---
 
 ## Packages
 
-- Upload: `Inklet (Package)_2.0.1.0_x86_x64_arm64_bundle.msixupload`
-- Version: 2.0.1.0 (supersedes 1.0.9.0; 2.0.1 fixes a crash on backspace at end of document found in QA)
+- Upload: `Inklet (Package)_2.0.2.0_x86_x64_arm64_bundle.msixupload`
+- Version: 2.0.2.0 (supersedes 1.0.9.0; 2.0.1 and 2.0.2 fix crashes and
+  selection/encoding defects found in QA - see CHANGELOG)
 - Architectures: x86, x64, ARM64
   - Note: on 32-bit (x86) devices, files larger than 256 MB are refused with a
     message pointing at the 64-bit build; the large-file engine is 64-bit only.

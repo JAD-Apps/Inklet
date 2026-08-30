@@ -4,9 +4,49 @@ All notable changes to Inklet are documented in this file.
 
 ---
 
-## [Unreleased]
+## [2.0.2] - 2026-08-30
 
 ### Fixed
+- Any assistive technology could crash the app just by inspecting it. Narrator,
+  Voice Access, Magnifier's text tracking and the accessibility scans a store
+  submission runs all enumerate a window's UI Automation tree, and doing so
+  killed Inklet instantly. The app's entry point ran the UI thread in the
+  wrong COM apartment, and automation providers are COM objects that must be
+  created on the same kind of thread the UI lives on; the mismatch faulted
+  inside the framework. The entry point now uses the apartment WinUI itself
+  expects, and the automation tree can be read safely.
+- Double-clicking a word selected nothing and triple-clicking a line selected
+  nothing: the editor had no notion of a click run, so every press simply moved
+  the caret. Double-click now selects the word under the pointer (or the run of
+  spaces between words), triple-click selects the whole line including its line
+  break, and dragging after either grows the selection by whole words or lines.
+- Pressing Enter a second time in the Find bar replaced the match it had just
+  found with a line break, quietly altering the file. Finding a match moved
+  focus into the document, so the next Enter was typed into it. Focus now stays
+  in the Find bar while it is open, and Enter walks the matches and wraps at the
+  end as expected.
+- UTF-16 and UTF-32 files were refused with a "Binary File" warning whose
+  default is Cancel. The check treats a zero byte in the first 8 KB as proof of
+  binary content, which is true of UTF-8 and legacy encodings but wrong for
+  UTF-16 and UTF-32, where ordinary letters contain one. A file carrying a
+  Unicode byte-order mark is now taken at its word and opens directly.
+- Reopening the app could kill it on every launch, leaving no way back in
+  without clearing app data by hand. Restoring a session whose selected tab
+  was a large file with the caret far into it (for example after Ctrl+End,
+  then closing the window) asked the engine for the caret's line and column
+  before background indexing had reached that far, and the resulting error
+  escaped through a UI callback and terminated the process. The same cause
+  could instead leave the tab blank until the window was clicked, when the
+  error surfaced on a background task and was swallowed. Caret positions are
+  now bounded by how much of the document is actually addressable rather than
+  by its estimated total size, in session restore, caret movement, selection,
+  undo/redo, rendering and the text-services read path.
+- Scrollbars were never visible. The editor's scrollbars are created directly
+  rather than by a scroll viewer, so they needed their indicator mode set
+  explicitly and an explicit thickness; without both they drew nothing and
+  took up no width, however correct their range and visibility were.
+  Vertical and horizontal scrollbars now appear whenever the content
+  overflows.
 - Clicking tabs stopped working after switching between tabs when a very
   large file was open: the text-services (IME) subsystem re-synchronises
   document content when told a document changed, and declaring a

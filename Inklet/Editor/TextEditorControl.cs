@@ -35,8 +35,34 @@ internal sealed record EditorViewState(ViewportAnchor Anchor, double ScrollX, lo
 internal sealed partial class TextEditorControl : UserControl
 {
     private readonly CanvasControl _canvas = new() { IsTabStop = false };
-    private readonly ScrollBar _vScroll = new() { Orientation = Orientation.Vertical, IsTabStop = false };
-    private readonly ScrollBar _hScroll = new() { Orientation = Orientation.Horizontal, IsTabStop = false };
+    // These ScrollBars are standalone (no ScrollViewer owns them), so nothing
+    // drives the "conscious scrollbar" visual states for us: IndicatorMode must be
+    // set explicitly or the template paints nothing, and an explicit thickness is
+    // needed or the Auto-sized grid track collapses to zero width. Without both,
+    // the bars are invisible however correct Maximum/ViewportSize/Visibility are.
+    private const double ScrollBarThickness = 12;
+
+    private readonly ScrollBar _vScroll = new()
+    {
+        Orientation = Orientation.Vertical,
+        IsTabStop = false,
+        IndicatorMode = ScrollingIndicatorMode.MouseIndicator,
+        Width = ScrollBarThickness,
+        MinWidth = ScrollBarThickness,
+        HorizontalAlignment = HorizontalAlignment.Right,
+        VerticalAlignment = VerticalAlignment.Stretch,
+    };
+
+    private readonly ScrollBar _hScroll = new()
+    {
+        Orientation = Orientation.Horizontal,
+        IsTabStop = false,
+        IndicatorMode = ScrollingIndicatorMode.MouseIndicator,
+        Height = ScrollBarThickness,
+        MinHeight = ScrollBarThickness,
+        HorizontalAlignment = HorizontalAlignment.Stretch,
+        VerticalAlignment = VerticalAlignment.Bottom,
+    };
     private readonly Microsoft.UI.Xaml.Shapes.Rectangle _caretRect = new() { IsHitTestVisible = false, Width = 1.6 };
     private readonly Grid _rootGrid;
 
@@ -74,6 +100,15 @@ internal sealed partial class TextEditorControl : UserControl
     private long _anchor;                // selection anchor (== caret when no selection)
     private bool _hasFocus;
     private bool _pointerDown;
+
+    // Multi-click selection (see OnPointerPressed): the run counter, the last
+    // click for the time/distance test, and the unit first clicked so a drag can
+    // grow by whole words/lines from it.
+    private int _clickCount;
+    private ulong _lastClickTimestamp;
+    private double _lastClickX, _lastClickY;
+    private int _dragGranularity = 1;      // 1 char, 2 word, 3 line
+    private long _dragOriginStart, _dragOriginEnd;
     private float _desiredColumnX = -1;  // sticky X for up/down navigation
 
     private const float PadLeft = 12f;
@@ -192,7 +227,9 @@ internal sealed partial class TextEditorControl : UserControl
     /// <summary>Restores a previously captured view for the incoming tab.</summary>
     public void RestoreViewState(EditorViewState state)
     {
-        long len = _doc?.Length ?? 0;
+        // AddressableLength, not Length: a session-restored caret can sit far beyond
+        // the indexer's absorbed frontier, and every geometry call below would throw.
+        long len = _doc?.AddressableLength ?? 0;
         _caret = Math.Clamp(state.Caret, 0, len);
         _anchor = Math.Clamp(state.Anchor2, 0, len);
         _anchorView = state.Anchor;
@@ -209,7 +246,7 @@ internal sealed partial class TextEditorControl : UserControl
     public long SelectionLength => Math.Abs(_caret - _anchor);
 
     public (long Line, long Column) CaretLineColumn
-        => _doc is null ? (0, 0) : _doc.GetLineColumn(Math.Clamp(_caret, 0, _doc.Length));
+        => _doc is null ? (0, 0) : _doc.GetLineColumn(Math.Clamp(_caret, 0, _doc.AddressableLength));
 
     public long LineCount => _doc?.LineCount ?? 1;
     public bool IsLineCountExact => _doc?.IsLineCountExact ?? true;
@@ -221,7 +258,7 @@ internal sealed partial class TextEditorControl : UserControl
     public void SetSelection(long start, long length)
     {
         if (_doc is null) return;
-        long len = _doc.Length;
+        long len = _doc.AddressableLength;
         start = _doc.SnapCaret(Math.Clamp(start, 0, len), SnapDirection.Left);
         long end = _doc.SnapCaret(Math.Clamp(start + Math.Max(0, length), 0, len), SnapDirection.Right);
         _anchor = start;
@@ -360,7 +397,7 @@ internal sealed partial class TextEditorControl : UserControl
         var pos = _doc.Undo();
         if (pos is long p)
         {
-            _caret = _anchor = Math.Clamp(p, 0, _doc.Length);
+            _caret = _anchor = Math.Clamp(p, 0, _doc.AddressableLength);
             NotifyImeUndoRedo();
             AfterEdit();
         }
@@ -372,7 +409,7 @@ internal sealed partial class TextEditorControl : UserControl
         var pos = _doc.Redo();
         if (pos is long p)
         {
-            _caret = _anchor = Math.Clamp(p, 0, _doc.Length);
+            _caret = _anchor = Math.Clamp(p, 0, _doc.AddressableLength);
             NotifyImeUndoRedo();
             AfterEdit();
         }

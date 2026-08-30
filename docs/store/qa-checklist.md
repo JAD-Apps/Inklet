@@ -1,8 +1,11 @@
-# Inklet 2.0.0 — Pre-submission QA checklist
+# Inklet 2.0.2 — Pre-submission QA checklist
 
-Build under test: **packaged 2.0.0.0** (already installed on this machine as the
-dev deploy). Work top to bottom; each line has an expected result. Tick the box,
-or note the failure in the margin with what you saw.
+Build under test: **packaged 2.0.2.0**. Build it and register it before starting
+(the dev deploy on this machine goes stale the moment a fix lands, and a checklist
+run against the wrong binary is worse than no run at all).
+
+Work top to bottom; each line has an expected result. Tick the box, or note the
+failure in the margin with what you saw.
 
 Test files: `%TEMP%\inklet-corpus\` (corpus-1mb.log, corpus-100mb.log,
 corpus-1gb.log, corpus-cjk.txt, corpus-mixed-eol.txt, corpus-megaline.txt).
@@ -109,7 +112,13 @@ If missing, regenerate: `Scripts\New-TestCorpus.ps1 -Large`.
 - [ ] Print preview/print a LARGE file: dialog appears promptly, spooling doesn't hang the app, `&P` total pages is right
 - [ ] Cancel in the print dialog — no crash, app usable
 
-## 10. Ten minutes of real use
+## 10. Accessibility
+
+- [ ] Turn Narrator on (Ctrl+Win+Enter), focus Inklet, then turn it off — the app
+      survives being inspected. A UI Automation client crashed 2.0.1 on sight, and
+      nothing in a purely visual pass catches it; store submissions run this scan.
+
+## 11. Ten minutes of real use
 
 - [ ] Use it on your own files for ten minutes — nothing feels off (typing feel, scrolling feel, focus, dialogs)
 
@@ -127,6 +136,7 @@ If missing, regenerate: `Scripts\New-TestCorpus.ps1 -Large`.
 | Undo history not persisted across restarts | parity with 1.0.9 |
 | 32-bit build refuses files > 256 MB | by design, points to 64-bit |
 | Saved-over file's old blob holds disk space until tab closes | accepted trade-off |
-| IME unavailable in documents beyond 2 billion chars | documented gap |
+| IME unavailable in documents beyond 2 million chars | documented gap (2.0.2) |
+| Editor exposes no automation text pattern (no screen-reader reading) | not implemented; safe to enumerate since 2.0.2 |
 
 **Result:** ☐ PASS — submit  ☐ Issues found: ______________________________

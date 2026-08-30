@@ -131,7 +131,9 @@ internal sealed partial class TextEditorControl
         var doc = _doc;
         var req = args.Request;
         if (doc is null) { req.Text = ""; return; }
-        long len = Math.Min(doc.Length, int.MaxValue);
+        // AddressableLength, not Length: TSF requests are inbound and can arrive
+        // while a streamed open is still indexing, when Length carries the estimate.
+        long len = Math.Min(doc.AddressableLength, int.MaxValue);
         long s = Math.Clamp(req.Range.StartCaretPosition, 0, len);
         long e = Math.Clamp(req.Range.EndCaretPosition, s, len);
         // TSF can request arbitrarily large ranges; clamp to a sane window.
@@ -222,8 +224,8 @@ internal sealed partial class TextEditorControl
         _inEcCallback = true;
         try
         {
-            _anchor = Math.Clamp(start, 0, doc.Length);
-            _caret = Math.Clamp(end, 0, doc.Length);
+            _anchor = Math.Clamp(start, 0, doc.AddressableLength);
+            _caret = Math.Clamp(end, 0, doc.AddressableLength);
             _desiredColumnX = -1;
             BringCaretIntoView();
             InvalidateView();

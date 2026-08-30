@@ -123,6 +123,20 @@ internal sealed partial class Document
     /// <summary>Total chars; estimated while a streamed open is still indexing.</summary>
     public long Length => PieceTreeOps.CharLen(Root) + PendingTailChars;
 
+    /// <summary>
+    /// The largest offset the offset-taking members (<see cref="GetLineColumn"/>,
+    /// <see cref="GetText"/>, <see cref="CopyTo"/>) will accept right now.
+    /// <para>
+    /// This is NOT <see cref="Length"/>. While a streamed open is still indexing,
+    /// <c>Length</c> adds <c>PendingTailChars</c> — the exactly-indexed-but-unabsorbed
+    /// span plus a density estimate for the un-scanned rest — so it can be far larger
+    /// than the piece tree actually addresses. Clamping a caret to <c>Length</c> and
+    /// then asking for its geometry throws <see cref="ArgumentOutOfRangeException"/>.
+    /// Display and caret-movement paths must clamp to this instead.
+    /// </para>
+    /// </summary>
+    public long AddressableLength => PieceTreeOps.CharLen(Root);
+
     /// <summary>Total lines (empty document = 1); estimated while indexing.</summary>
     public long LineCount => PieceTreeOps.Breaks(Root) + PendingTailBreaks + 1;
 
@@ -217,6 +231,51 @@ internal sealed partial class Document
         var chars = new char[contentLen];
         PieceTreeOps.CopyTo(root, start, (int)contentLen, chars, BufferFor);
         return new LineSlice(chars, start, term);
+    }
+
+    /// <summary>
+    /// Word-character test used by word-wise navigation and selection: letters,
+    /// digits and underscore are word characters, everything else separates.
+    /// </summary>
+    public static bool IsWordSeparator(char c) => c != '_' && !char.IsLetterOrDigit(c);
+
+    /// <summary>
+    /// The run of like characters around <paramref name="offset"/> — a word, or the
+    /// stretch of separators when the offset falls between words. Never spans a line
+    /// break: the range is clamped to the line the offset sits on.
+    /// </summary>
+    public (long Start, long End) WordRangeAt(long offset)
+    {
+        offset = Math.Clamp(offset, 0, AddressableLength);
+        var (line, col) = GetLineColumn(offset);
+        var slice = GetLine(line);
+        var text = slice.Text.Span;
+        if (text.Length == 0) return (slice.CharOffset, slice.CharOffset);
+
+        // An offset at the very end of the line belongs to the last character's run,
+        // which is what clicking past the end of a line is asking for.
+        int p = (int)Math.Clamp(col, 0, text.Length);
+        if (p >= text.Length) p = text.Length - 1;
+
+        bool sep = IsWordSeparator(text[p]);
+        int s = p, e = p;
+        while (s > 0 && IsWordSeparator(text[s - 1]) == sep) s--;
+        while (e < text.Length && IsWordSeparator(text[e]) == sep) e++;
+        return (slice.CharOffset + s, slice.CharOffset + e);
+    }
+
+    /// <summary>
+    /// The whole logical line containing <paramref name="offset"/>, terminator
+    /// included, so selecting and deleting it removes the line break too.
+    /// </summary>
+    public (long Start, long End) LineRangeAt(long offset)
+    {
+        offset = Math.Clamp(offset, 0, AddressableLength);
+        var (line, _) = GetLineColumn(offset);
+        var slice = GetLine(line);
+        long end = Math.Min(AddressableLength,
+                            slice.CharOffset + slice.Text.Length + slice.TerminatorLength);
+        return (slice.CharOffset, end);
     }
 
     /// <summary>

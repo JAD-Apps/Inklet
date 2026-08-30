@@ -75,6 +75,23 @@ public static class EncodingDetector
     /// <summary>
     /// Detects encoding from a byte order mark at the start of the data.
     /// </summary>
+    /// <summary>
+    /// True when the bytes open with a UTF-16 or UTF-32 byte order mark — the
+    /// encodings whose normal text representation is full of NUL bytes.
+    /// </summary>
+    /// <remarks>
+    /// The binary sniffer treats a NUL in the first 8 KB as proof of a binary
+    /// file, which is true of UTF-8 and single-byte text but wrong for UTF-16/32:
+    /// every ASCII character there carries a NUL. Callers use this to skip the NUL
+    /// heuristic when the file has declared itself Unicode. Deliberately does not
+    /// include the UTF-8 BOM, whose content has no such NULs.
+    /// </remarks>
+    internal static bool HasNulBearingUnicodeBom(ReadOnlySpan<byte> data)
+        => (data.Length >= 4 && data[0] == 0x00 && data[1] == 0x00 && data[2] == 0xFE && data[3] == 0xFF)  // UTF-32 BE
+        || (data.Length >= 4 && data[0] == 0xFF && data[1] == 0xFE && data[2] == 0x00 && data[3] == 0x00)  // UTF-32 LE
+        || (data.Length >= 2 && data[0] == 0xFE && data[1] == 0xFF)                                        // UTF-16 BE
+        || (data.Length >= 2 && data[0] == 0xFF && data[1] == 0xFE);                                       // UTF-16 LE
+
     private static (Encoding Encoding, bool HasBom)? DetectBom(byte[] data)
     {
         // UTF-32 BE: 00 00 FE FF (check before UTF-16 BE)

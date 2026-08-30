@@ -1287,7 +1287,15 @@ public sealed partial class MainWindow : Window
             if (hit is { } m)
             {
                 Editor.SetSelection(m.Offset, m.Length);
-                Editor.Focus(FocusState.Programmatic);
+
+                // Only take focus into the editor when the find bar is closed (F3 or
+                // the menu). While the bar is open focus must stay in it: moving it
+                // to the editor meant the user's next Enter - the ordinary way to
+                // walk matches - was delivered to the document and replaced the match
+                // just found with a line break. The selection renders either way, and
+                // Escape and the close button already return focus to the editor.
+                if (FindReplaceBar.Visibility != Visibility.Visible)
+                    Editor.Focus(FocusState.Programmatic);
             }
         }
         catch (OperationCanceledException) { }

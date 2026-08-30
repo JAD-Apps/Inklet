@@ -11,7 +11,7 @@
 <img src="docs/media/inklet-main.png" alt="Inklet with three documents open as tabs, the status bar reporting caret position, line ending and encoding for the active file" width="900">
 </p>
 
-**Status:** released and actively developed · **Latest:** v2.0.1 · **Requires:** Windows 10 1809 (build 17763) or later
+**Status:** released and actively developed · **Latest:** v2.0.2 · **Requires:** Windows 10 1809 (build 17763) or later
 
 A lightweight, modern Notepad clone for Windows built with WinUI 3 and .NET 8.
 

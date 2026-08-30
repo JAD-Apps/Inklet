@@ -188,6 +188,13 @@ public static class FileService
             using var stream = File.OpenRead(filePath);
             var buffer = new byte[Math.Min(8192, stream.Length)];
             int bytesRead = stream.Read(buffer, 0, buffer.Length);
+
+            // ...except in UTF-16/32, where every ASCII character carries a NUL.
+            // A file that opens with one of those BOMs has declared itself text,
+            // so the NUL heuristic does not apply to it.
+            if (EncodingDetector.HasNulBearingUnicodeBom(buffer.AsSpan(0, bytesRead)))
+                return false;
+
             for (int i = 0; i < bytesRead; i++)
             {
                 if (buffer[i] == 0x00)

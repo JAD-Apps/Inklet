@@ -285,7 +285,9 @@ internal sealed partial class TextEditorControl
     {
         var doc = _doc;
         if (doc is null) return (0, 0, 0);
-        offset = Math.Clamp(offset, 0, doc.Length); // defence: never throw from a display path
+        // AddressableLength, not Length — the latter includes the indexing estimate,
+        // which GetLineColumn rejects. Defence: never throw from a display path.
+        offset = Math.Clamp(offset, 0, doc.AddressableLength);
         var (line, col) = doc.GetLineColumn(offset);
         var entry = GetLayout(line);
         if (entry is null) return (line, 0, 0);
