@@ -1,6 +1,6 @@
-﻿# Inklet 2.0.0 — Microsoft Store submission pack
+﻿# Inklet 2.0.2 — Microsoft Store submission pack
 
-Everything to paste into Partner Center for the 2.0.0 update. Field limits are
+Everything to paste into Partner Center for the 2.0.2 update. Field limits are
 noted where they matter; all copy below fits them. The upload artifact is
 `Inklet (Package)/AppPackages/Inklet (Package)_2.0.2.0_x86_x64_arm64_bundle.msixupload`.
 
