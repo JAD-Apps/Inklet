@@ -123,6 +123,20 @@ internal sealed partial class Document
     /// <summary>Total chars; estimated while a streamed open is still indexing.</summary>
     public long Length => PieceTreeOps.CharLen(Root) + PendingTailChars;
 
+    /// <summary>
+    /// The largest offset the offset-taking members (<see cref="GetLineColumn"/>,
+    /// <see cref="GetText"/>, <see cref="CopyTo"/>) will accept right now.
+    /// <para>
+    /// This is NOT <see cref="Length"/>. While a streamed open is still indexing,
+    /// <c>Length</c> adds <c>PendingTailChars</c> — the exactly-indexed-but-unabsorbed
+    /// span plus a density estimate for the un-scanned rest — so it can be far larger
+    /// than the piece tree actually addresses. Clamping a caret to <c>Length</c> and
+    /// then asking for its geometry throws <see cref="ArgumentOutOfRangeException"/>.
+    /// Display and caret-movement paths must clamp to this instead.
+    /// </para>
+    /// </summary>
+    public long AddressableLength => PieceTreeOps.CharLen(Root);
+
     /// <summary>Total lines (empty document = 1); estimated while indexing.</summary>
     public long LineCount => PieceTreeOps.Breaks(Root) + PendingTailBreaks + 1;
 
