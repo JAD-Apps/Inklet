@@ -7,6 +7,16 @@ All notable changes to Inklet are documented in this file.
 ## [2.0.2] - 2026-08-30
 
 ### Fixed
+- Save As killed the app instead of saving, and so did choosing "Save" when
+  closing an unsaved tab: the save picker was configured with a wildcard it
+  rejects, and the resulting error escaped before the picker even appeared.
+  The picker now opens, writes the file and retitles the tab, and any future
+  picker failure shows the "could not save" dialog instead of ending the
+  process.
+- On the 32-bit build, opening a file larger than 256 MB showed a raw
+  "Not enough memory resources" OS error instead of the intended message.
+  The size is now checked before the file is mapped, so the refusal reads
+  "Files larger than 256 MB need the 64-bit version of Inklet."
 - Any assistive technology could crash the app just by inspecting it. Narrator,
   Voice Access, Magnifier's text tracking and the accessibility scans a store
   submission runs all enumerate a window's UI Automation tree, and doing so

@@ -135,7 +135,7 @@ Ctrl+G jumps to any line.
 
 ## Pre-submission checklist
 
-- [ ] Manual QA pass on the installed 2.0.0.0 (wrap, IME, print, DPI, dark mode)
-- [ ] Merge PR #50 to master, tag v2.0.0
+- [ ] Manual QA pass on the installed 2.0.2.0 (`docs/store/qa-checklist.md`)
+- [ ] Master is green (CI) and tagged v2.0.2
 - [ ] Upload the .msixupload, paste the fields above, reorder screenshots
 - [ ] Submit for certification
